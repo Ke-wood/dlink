@@ -149,7 +149,7 @@
 #### 阶段 1：建立同冷却态基线（直连）
 
 ```bash
-cd D:/plan/HANDOFF-direct-link-tool
+cd /path/to/dlink
 # 每次实验前重新取直链（expires=8h，且旧链可能已衰减）
 # 用现成的 .private/dlink.txt，若过期则重跑取链脚本
 python -c "

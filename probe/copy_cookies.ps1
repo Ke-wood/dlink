@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
-$src = 'C:\Users\klklk\AppData\Local\Microsoft\Edge\User Data\Default\Network\Cookies'
-$dstDir = 'D:\plan\HANDOFF-direct-link-tool\.private\edgecopy'
+$src = Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\User Data\Default\Network\Cookies'
+$dstDir = Join-Path $env:TEMP 'dlink-edgecopy'
 New-Item -ItemType Directory -Force -Path $dstDir | Out-Null
 
 $share = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete

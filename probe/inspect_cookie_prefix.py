@@ -1,6 +1,8 @@
 import sqlite3, sys
 
-p = r'C:\Users\klklk\AppData\Local\Microsoft\Edge\User Data\Default\Network\Cookies'
+import os
+_BASE = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Microsoft', 'Edge', 'User Data')
+p = os.path.join(_BASE, 'Default', 'Network', 'Cookies')
 uri = 'file:' + p.replace('\\', '/') + '?mode=ro&immutable=1'
 try:
     con = sqlite3.connect(uri, uri=True, timeout=2)

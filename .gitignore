@@ -1,0 +1,52 @@
+# 凭证与个人数据 —— 绝对不要提交
+
+# 本地私有数据（真实 cookie / 直链 / 抓包结果）
+.private/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# pytest
+.pytest_cache/
+pytest-cache-files-*/
+
+# 测试临时目录
+tests/_tmp/
+tmp_tests/
+.pytmp/
+
+# 研究用的第三方源码（体积大，且有各自的许可证）
+research/src-alist/
+research/src-openlist/
+research/src-pcsgo/
+research/src-quark/
+
+# 调研时抓的临时文件
+research/*.json
+.tmp/
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+*~
+
+# 系统
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# 下载产物
+*.7z
+*.zip
+*.rar
+!extension/icons/*.png
+
+# 手工解包的测试依赖（本机 pytest 缺失时的临时方案）
+.vendor/

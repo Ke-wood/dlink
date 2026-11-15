@@ -1,0 +1,72 @@
+{
+  "manifest_version": 3,
+  "name": "DLink 直链获取器",
+  "version": "0.1.0",
+  "description": "从网盘分享页提取直链，发送到本地下载器。不劫持浏览器原生下载。",
+  "permissions": [
+    "cookies",
+    "storage",
+    "activeTab",
+    "scripting",
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess",
+    "tabs",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://pan.baidu.com/*",
+    "https://*.baidu.com/*",
+    "https://pan.quark.cn/*",
+    "https://*.quark.cn/*",
+    "https://drive.uc.cn/*",
+    "https://*.uc.cn/*",
+    "https://share.weiyun.com/*",
+    "https://*.weiyun.com/*",
+    "https://*.pcs.baidu.com/*",
+    "https://*.drive.quark.cn/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "DLink 直链获取器"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://pan.baidu.com/s/*",
+        "https://pan.quark.cn/s/*",
+        "https://drive.uc.cn/s/*",
+        "https://share.weiyun.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "declarative_net_request": {
+    "rule_resources": []
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "injected.js"
+      ],
+      "matches": [
+        "https://pan.baidu.com/*",
+        "https://pan.quark.cn/*",
+        "https://drive.uc.cn/*"
+      ]
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

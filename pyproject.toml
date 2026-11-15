@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dlink"
+version = "0.1.0"
+description = "网盘分享链接 → 直链 → 多线程下载（浏览器扩展取链 + 桌面下载器）"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "requests>=2.31",
+    "cryptography>=41.0",
+    "PySide6>=6.6",
+]
+
+[project.scripts]
+dlink-server = "dlink.server:serve"
+
+[project.gui-scripts]
+dlink-gui = "dlink.gui.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

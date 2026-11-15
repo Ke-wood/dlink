@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 420px; min-height: 180px; max-height: 560px;
+      font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+      color: #e8e8e8; background: #1e1e1e;
+      display: flex; flex-direction: column;
+    }
+    header {
+      padding: 12px 14px; border-bottom: 1px solid #333;
+      display: flex; align-items: center; gap: 8px;
+    }
+    header h1 { font-size: 14px; font-weight: 600; }
+    .badge {
+      font-size: 11px; padding: 2px 7px; border-radius: 10px;
+      background: #2d4f2d; color: #8fd18f;
+    }
+    .badge.off { background: #4f2d2d; color: #d18f8f; }
+    main { padding: 12px 14px; overflow-y: auto; flex: 1; }
+    .row { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; }
+    button {
+      font: inherit; cursor: pointer; border: 0; border-radius: 6px;
+      padding: 8px 14px; background: #2f6fdb; color: #fff; font-weight: 500;
+    }
+    button:hover { background: #3b7eeb; }
+    button:disabled { background: #3a3a3a; color: #777; cursor: not-allowed; }
+    button.ghost { background: #333; color: #ddd; }
+    button.ghost:hover { background: #3d3d3d; }
+    #status { font-size: 12px; color: #999; min-height: 18px; margin-bottom: 8px; }
+    #status.err { color: #ff8a8a; }
+    #status.ok { color: #8fd18f; }
+    .hint { font-size: 12px; color: #d9a441; margin: 6px 0; }
+    .file {
+      padding: 8px 10px; margin-bottom: 6px; border-radius: 5px;
+      background: #262626; border-left: 3px solid #444;
+    }
+    .file.ok { border-left-color: #4caf50; }
+    .file.failed { border-left-color: #f44336; }
+    .file .name { font-weight: 500; word-break: break-all; }
+    .file .meta { font-size: 11px; color: #888; margin-top: 3px; }
+    .file .err { font-size: 11px; color: #ff8a8a; margin-top: 3px; }
+    footer {
+      padding: 10px 14px; border-top: 1px solid #333;
+      display: flex; gap: 8px;
+    }
+    footer button { flex: 1; }
+    code { background: #2a2a2a; padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>DLink</h1>
+    <span class="badge" id="dl-status">检测中…</span>
+  </header>
+
+  <main>
+    <div class="row">
+      <button id="btn-resolve">提取直链</button>
+      <button id="btn-clear" class="ghost">清空</button>
+    </div>
+    <div id="status">在网盘分享页点击「提取直链」</div>
+    <div id="hint" class="hint" hidden></div>
+    <div id="list"></div>
+  </main>
+
+  <footer>
+    <button id="btn-send" disabled>发送到下载器</button>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

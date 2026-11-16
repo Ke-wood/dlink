@@ -25,8 +25,31 @@ python -m PyInstaller DLink.spec --noconfirm --clean
 
 如果要更快启动，改成目录模式：把 `EXE(...)` 拆成 `EXE` + `COLLECT`，产物是文件夹。本项目选单文件是因为分发便利性更重要。
 
-### ⚠️ `console=False` 的陷阱：`sys.stderr` 是 `None`
+### 目录版（onedir）：单文件版起不来时的兜底
 
+单文件版启动时要把自己解压到 `%TEMP%\_MEIxxxxxx`。这一步失败时，
+PyInstaller 的引导程序只弹一句 `could not create temporary directory` 就退出 ——
+**此时 Python 代码一行都没执行**，日志和异常处理全都用不上（2026-11-16 实际遇到，
+用户侧表现为「双击没反应 / 弹个报错就没了」，我们这边拿不到任何线索）。
+
+```bash
+python -m PyInstaller DLink-onedir.spec --noconfirm --clean
+python scripts/pack_exe_onedir.py      # → dist/dlink-v<ver>-windows-x64-onedir.zip
+```
+
+目录版不解压任何东西，双击直接跑，启动还快 2-3 秒；代价是产物为文件夹（zip 分发）。
+
+两个版本都要冒烟：
+
+```bash
+python scripts/smoke_exe.py                                     # 单文件
+python scripts/smoke_exe.py --exe dist/DLink-onedir/DLink.exe    # 目录版
+```
+
+> 顺带：被 `taskkill /F` 强杀的单文件版会在 `%TEMP%` 留下 `_MEI*` 目录，
+> 每个约 130MB。本机曾堆了 20 个、共 2.57GB，已清理。
+
+### ⚠️ `console=False` 的陷阱：`sys.stderr` 是 `None`
 windowed 进程里没有控制台，`sys.stderr`（以及 `sys.stdout`）是 `None`。
 任何 `sys.stderr.write(...)` 都会抛 `AttributeError` —— 而
 `http.server.BaseHTTPRequestHandler` 是**每个请求开一个线程**调 `log_message()` 的，

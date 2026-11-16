@@ -77,6 +77,12 @@
 
 ### 方式一：直接用打包好的 exe（推荐）
 
+> **双击后弹 `could not create temporary directory` 就退出？**
+> 这是单文件版解压临时目录失败（和程序无关），换**目录版**：
+> 下载 `dlink-v*-windows-x64-onedir.zip`，解压后双击里面的 `DLink.exe` 即可。
+> 排查线索见 `%LOCALAPPDATA%\dlink\startup.log`。
+
+
 1. 从 [Releases](../../releases) 下载 `DLink.exe`
 2. 双击运行 —— **后端和界面都会自动启动**，无需安装 Python
 3. 装浏览器扩展：菜单 **帮助 → 导出浏览器扩展…**，选一个文件夹，

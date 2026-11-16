@@ -73,9 +73,50 @@ def _start_backend() -> None:
     print("[后端] 启动超时（GUI 仍会尝试连接）")
 
 
+def _setup_startup_log() -> None:
+    """把启动信息与未捕获异常写进 %LOCALAPPDATA%/dlink/startup.log。
+
+    为什么需要：打包版是 windowed 进程，没有控制台，`print` 出去的东西
+    没人看得到。用户报「打不开」时我们手里一条线索都没有（2026-11-16 就
+    踩过一次：只看到一句 could not create temporary directory）。
+    有了这个文件，至少能区分是卡在导入、后端起不来，还是 GUI 崩了。
+
+    注意：单文件版如果连临时目录都建不出来，Python 代码一行都不会执行，
+    这里也拿不到日志 —— 那种情况只能用目录版（DLink-onedir.spec）。
+    """
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "dlink"
+        base.mkdir(parents=True, exist_ok=True)
+        log = base / "startup.log"
+        if log.exists() and log.stat().st_size > 1_000_000:
+            log.replace(log.with_suffix(".log.1"))
+        stream = open(log, "a", encoding="utf-8", buffering=1)
+    except OSError:
+        return
+
+    sys.stdout = stream
+    sys.stderr = stream
+
+    def hook(tp, val, tb):
+        import traceback
+        print(f"\n[{time.strftime('%H:%M:%S')}] 未捕获异常：")
+        traceback.print_exception(tp, val, tb)
+
+    sys.excepthook = hook
+    from dlink import __version__
+    print(f"\n=== 启动 {time.strftime('%Y-%m-%d %H:%M:%S')} v{__version__} ===")
+    print(f"  exe={sys.executable}")
+    print(f"  _MEIPASS={getattr(sys, '_MEIPASS', '(onedir)')}")
+    print(f"  TEMP={os.environ.get('TEMP')!r} cwd={os.getcwd()}")
+
+
 def main() -> int:
     # 高 DPI（Qt6 默认已开启，这里只做兼容）
     os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
+
+    _setup_startup_log()
 
     if _already_running():
         print("[启动] 检测到已有实例在运行，本进程只打开窗口")

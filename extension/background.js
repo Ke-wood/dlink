@@ -61,7 +61,9 @@ async function injectAndResolve(tabId, platformId, shareUrl) {
 /** 用 chrome.cookies 补 HttpOnly 的关键 cookie */
 async function collectHttpOnlyCookies(platformId) {
   const domains = {
-    baidu: ['https://pan.baidu.com', 'https://passport.baidu.com'],
+    // 百度除主页/通行证外，CDN 自己的域也要收（实测 31045 就是 cookie 没覆盖到）
+    baidu: ['https://pan.baidu.com', 'https://passport.baidu.com',
+            'https://d.pcs.baidu.com', 'https://pcs.baidu.com'],
     quark: ['https://pan.quark.cn', 'https://drive-pc.quark.cn'],
     uc: ['https://drive.uc.cn', 'https://pc-api.uc.cn'],
     weiyun: ['https://share.weiyun.com'],
@@ -80,6 +82,28 @@ async function collectHttpOnlyCookies(platformId) {
 function mergeCookies(fromPage, fromBrowser) {
   // 浏览器侧（含 HttpOnly）优先，但页面侧的补全
   return { ...fromPage, ...fromBrowser };
+}
+
+/** 百度把主 cookie 改名成 `<名字>_BFESS`，但 CDN 仍按旧名认人。
+ *
+ * 实测（2026-11-16，真实登录态）：
+ *   chrome.cookies 里只有 `BDUSS_BFESS`，没有 `BDUSS`。
+ *   扩展把 cookie 原样转发 → CDN 返回
+ *     403 {"error_code":31045,"error_msg":"user not exists"}
+ *   —— 它不认识 BDUSS_BFESS 这个名字。
+ * 所以对每个 `X_BFESS` 额外补一份 `X`（同名已存在则不覆盖），
+ * 两个名字一起发，谁认都行。
+ */
+function aliasBfessCookies(cookies) {
+  const out = { ...(cookies || {}) };
+  const SUFFIX = '_BFESS';
+  for (const [k, v] of Object.entries(cookies || {})) {
+    if (typeof k === 'string' && k.endsWith(SUFFIX)) {
+      const base = k.slice(0, -SUFFIX.length);
+      if (base && !out[base]) out[base] = v;
+    }
+  }
+  return out;
 }
 
 // ---------------- 主流程 ----------------
@@ -122,7 +146,10 @@ async function handleResolve(tab) {
       size: f.size || 0,
       md5: f.md5 || '',
       sha1: f.sha1 || '',
-      cookies: mergeCookies(f.cookies || {}, httpOnly),
+      // 百度要用别名（BDUSS_BFESS → BDUSS），其他平台原样
+      cookies: platform.id === 'baidu'
+        ? aliasBfessCookies(mergeCookies(f.cookies || {}, httpOnly))
+        : mergeCookies(f.cookies || {}, httpOnly),
       headers: f.headers || {},
       refresh: f.refresh || null,
       // 转存兜底拿到的直链：会在用户网盘留副本，UI 要提示（带目录）

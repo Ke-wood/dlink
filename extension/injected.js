@@ -17,7 +17,7 @@
   //   以前写的是 `if (window.__DLINK__) return;` —— 扩展更新后重新注入时，
   //   页面里的旧对象还活着，新代码直接被挡掉，用户必须手动 F5 才能生效，
   //   表现就是「明明更新了扩展，功能还是旧的」。
-  const BUILD = '0.2.2';
+  const BUILD = '0.2.3';
   if (window.__DLINK__ && window.__DLINK__.build === BUILD) return;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -196,10 +196,33 @@
   }
 
   /** 发一次 sharedownload；网络异常也归成业务错误，交给上层换 sekey 重试 */
-  async function sharedownloadOnce(surl, f, sekey, jsToken, sign, timestamp, pathList) {
-    // 参数严格对齐「实测可用」的 AList 写法：
-    //   · 不带 bdstoken —— 空串会被当成「提供了但无效」，直接 9019 need verify
-    //   · 不带页面 jsToken —— 过期的 jsToken 同样被判成校验失败
+  /** 取账号的 bdstoken（网页端接口用它做会话绑定）。
+   *
+   * 网页自己发 sharedownload 时是带 bdstoken 的；AList 那套写法不带
+   * （它用 clienttype=12 走客户端通道）。两种形状百度都接受，但**同一账号
+   * 只认其中一种** —— 实测：登录态正常却返回 errno=9019 needverify，
+   * 说明当前形状和这个账号不匹配，所以要挨个试。
+   */
+  async function baiduBdstoken() {
+    try {
+      const r = await fetch(
+        'https://pan.baidu.com/api/gettemplatevariable?fields='
+        + encodeURIComponent('["bdstoken"]')
+        + '&channel=chunlei&web=1&app_id=250528',
+        { credentials: 'include' });
+      const j = await r.json();
+      return (j.result && j.result.bdstoken) || '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  /** 一次 sharedownload。shape 决定「会话如何被证明」：
+   *   A 网页形状：clienttype=0 + 真 bdstoken + 页面 jsToken
+   *   B 旧形状  ：clienttype=0 + 不带 bdstoken + 页面 jsToken（历史实测跑通过）
+   *   C 客户端形状：clienttype=12 + 都不带（AList 做法）
+   */
+  async function sharedownloadOnce(surl, f, sekey, shape, sign, timestamp, pathList) {
     const body = new URLSearchParams({
       encrypt: '0', product: 'share',
       uk: String(f.uk), primaryid: String(f.shareid),
@@ -207,23 +230,49 @@
       extra: JSON.stringify({ sekey }),
       type: 'nolimit',
     });
-    // path_list：根目录不传；子目录文件才需要
-    if (pathList) body.set('path_list', pathList);
+    if (pathList) body.set('path_list', pathList);   // 子目录文件才需要
+    if (shape.jsToken) body.set('jsToken', shape.jsToken);
+
+    const q = new URLSearchParams({
+      sign: String(sign), timestamp: String(timestamp), channel: 'chunlei',
+      web: '1', app_id: '250528', clienttype: String(shape.ct),
+    });
+    if (shape.bdstoken) q.set('bdstoken', shape.bdstoken);
     try {
-      const r = await fetch(
-        'https://pan.baidu.com/api/sharedownload?' + new URLSearchParams({
-          sign, timestamp: String(timestamp), channel: 'chunlei',
-          web: '1', app_id: '250528', clienttype: '12',
-        }),
-        {
-          method: 'POST', credentials: 'include',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: body.toString(),
-        });
+      const r = await fetch('https://pan.baidu.com/api/sharedownload?' + q, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      });
       return await r.json();
     } catch (e) {
-      return { errno: -1, show_msg: `请求失败：${e && e.message ? e.message : e}` };
+      return { errno: -1, errmsg: `请求失败：${e && e.message ? e.message : e}` };
     }
+  }
+
+  /** 按顺序试几种请求形状，成功即止 */
+  async function baiduSharedownload(surl, f, sekey, sign, timestamp, pathList) {
+    const jsToken = window.jsToken || '';
+    const bdstoken = await baiduBdstoken();
+    const shapes = [
+      { name: 'web', ct: 0, bdstoken, jsToken },
+      { name: 'legacy', ct: 0, bdstoken: '', jsToken },
+      { name: 'client', ct: 12, bdstoken: '', jsToken: '' },
+    ];
+    const tried = [];
+    let last = null;
+    for (const shape of shapes) {
+      // 没有 bdstoken 时 web 形状和 legacy 完全一样，跳过去省一次请求
+      if (shape.name === 'web' && !shape.bdstoken) continue;
+      const dl = await sharedownloadOnce(surl, f, sekey, shape, sign, timestamp, pathList);
+      tried.push({ shape: shape.name, errno: dl && dl.errno });
+      last = dl;
+      if (dl && dl.errno === 0 && dl.list && dl.list[0] && dl.list[0].dlink) {
+        return { dl, shape: shape.name, tried };
+      }
+      if (![9019, -6, -20, -9, 105].includes(Number(dl && dl.errno))) break;
+    }
+    return { dl: last, shape: null, tried };
   }
 
   /** 从分享接口拿「服务端认可的」上下文：seckey / shareid / uk / 根路径。
@@ -283,69 +332,66 @@
     const { sign, timestamp } = cfg.data || {};
     const jsToken = window.jsToken || '';
 
-    // 两个维度都要试：
-    //   sekey  —— 页面变量可能缺失，或残留上一个分享的值
+    // 三个维度都要试，任一成功即止（总请求数封顶，避免触发限流）：
+    //   sekey     —— 页面变量可能缺失，或残留上一个分享的值
     //   path_list —— 子目录里的文件不带父目录会被判成 -20
+    //   请求形状  —— bdstoken/jsToken/clienttype 组合，见 baiduSharedownload
     const candidates = baiduSekeyCandidates(sekeyHint);
-    const tried = candidates.length ? candidates : [''];
+    const sekList = candidates.length ? candidates : [''];
     const dir = f.parent || '';
-    const pathVariants = dir
-      ? [JSON.stringify([dir]), '']   // 先按父目录，再退回根目录写法
-      : [''];
+    const pathVariants = dir ? [JSON.stringify([dir]), ''] : [''];
 
-    const RETRY_ERRNOS = new Set([-20, -9, -6, 105]);
+    const RETRY_ERRNOS = [9019, -6, -20, -9, 105];
+    const jobs = [];
+    sekList.forEach((sk, i) => {
+      // 只有最可信的那个 sekey 才试两种 path_list，其余用根目录写法
+      for (const pl of (i === 0 ? pathVariants : [''])) jobs.push({ sk, pl });
+    });
+
     let dl = null;
     let attempts = 0;
-    let lastSekey = '';
-    for (const sekey of tried) {
-      lastSekey = sekey;
-      for (const pathList of pathVariants) {
-        attempts++;
-        dl = await sharedownloadOnce(surl, f, sekey, jsToken, sign, timestamp, pathList);
-        if (dl.errno === 0 && dl.list && dl.list[0] && dl.list[0].dlink) {
-          const it = dl.list[0];
-          return {
-            ok: true,
-            item: {
-              url: it.dlink,
-              name: f.name,
-              size: Number(it.size || f.size || 0),
-              md5: (it.md5 || f.md5 || '').toLowerCase(),
-              // 直链必须带 BDUSS 系 cookie，否则 403 error_code:31045
-              cookies: await pickCookies('baidu'),
-              headers: { Referer: 'https://pan.baidu.com/' },
-              expires_at: expiresAtFor('baidu'),
-              refresh: { platform: 'baidu', shareUrl: surl, fid: f.fid },
-            },
-          };
-        }
-        if (!RETRY_ERRNOS.has(Number(dl.errno))) break;
-        if (attempts >= 6) break;
+    let shapeTried = [];
+    for (const job of jobs) {
+      if (attempts >= 6) break;
+      const res = await baiduSharedownload(surl, f, job.sk, sign, timestamp, job.pl);
+      attempts += res.tried.length;
+      shapeTried = res.tried;
+      dl = res.dl;
+      if (res.shape) {
+        const it = dl.list[0];
+        return {
+          ok: true,
+          item: {
+            url: it.dlink,
+            name: f.name,
+            size: Number(it.size || f.size || 0),
+            md5: (it.md5 || f.md5 || '').toLowerCase(),
+            // 直链必须带 BDUSS 系 cookie，否则 403 error_code:31045
+            cookies: await pickCookies('baidu'),
+            headers: { Referer: 'https://pan.baidu.com/' },
+            expires_at: expiresAtFor('baidu'),
+            refresh: { platform: 'baidu', shareUrl: surl, fid: f.fid },
+          },
+        };
       }
+      if (!RETRY_ERRNOS.includes(Number(dl && dl.errno))) break;
     }
 
     const errno = Number(dl && dl.errno);
     const detail = (dl && (dl.show_msg || dl.errmsg)) || '';
+    const shapeInfo = shapeTried.map((x) => `${x.shape}:${x.errno}`).join('/');
     let msg = `sharedownload errno=${dl && dl.errno} ${detail}`.trim();
-    if (!detail && dl) {
-      // 没有可读消息时把原始响应带出来（截断，避免刷屏），便于线上定位
-      try {
-        const raw = JSON.stringify(dl);
-        msg += ` raw=${raw.length > 160 ? raw.slice(0, 160) + '…' : raw}`;
-      } catch (e) { /* ignore */ }
-    }
+    msg += `｜试了 ${attempts} 次（${sekList.length} 个 sekey${shapeInfo ? '，形状 ' + shapeInfo : ''}）`;
     if (errno === -20) {
       // 百度把「验证状态对不上」和「参数对不上」都报成「验证码输入错误」
-      msg += `｜试了 ${attempts} 次（${tried.length} 个 sekey 来源`
-        + `${dir ? ' × 2 种路径参数' : ''}）都被拒`;
       msg += dir ? `；文件在子目录「${dir}」里` : '';
       msg += '。可试：分享页重输提取码/过掉图形验证码后 F5 再点；'
         + '仍失败则这个分享可能只允许转存或客户端下载';
     } else if (errno === -9 || errno === 105) {
       msg += '｜提取码错误或未通过：确认链接里的 ?pwd= 是否正确';
     } else if (errno === 9019) {
-      msg += '｜百度要求「需要验证」：通常是登录态不被认可或该分享限流。'
-        + '可试：刷新页面确认还处于登录状态；或先用浏览器手动下载一次再重试';
+      msg += '｜百度判定「需要验证」：网页形状和客户端形状都被拒。'
+        + '这通常意味着该账号的下载接口要求二次验证（网页上会弹验证码）';
     }
     return { ok: false, message: msg };
   }
@@ -739,12 +785,16 @@
       if (cfg.errno !== 0) return { step: 'tplconfig', errno: cfg.errno };
       const sign = (cfg.data || {}).sign;
       const ts = (cfg.data || {}).timestamp;
-      const dl = await sharedownloadOnce(surl, file, ctx.seckey, '', sign, ts, '');
+      const res = await baiduSharedownload(surl, file, ctx.seckey, sign, ts, '');
+      const dl = res.dl;
       return {
         step: 'sharedownload',
+        build: BUILD,
         file: file.name,
         listed,
         seckeyLen: (ctx.seckey || '').length,
+        okShape: res.shape || null,
+        shapes: res.tried,
         errno: dl && dl.errno,
         errmsg: (dl && (dl.errmsg || dl.show_msg)) || '',
         keys: dl ? Object.keys(dl) : [],

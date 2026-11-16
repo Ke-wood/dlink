@@ -17,7 +17,7 @@
   //   以前写的是 `if (window.__DLINK__) return;` —— 扩展更新后重新注入时，
   //   页面里的旧对象还活着，新代码直接被挡掉，用户必须手动 F5 才能生效，
   //   表现就是「明明更新了扩展，功能还是旧的」。
-  const BUILD = '0.2.4';
+  const BUILD = '0.2.5';
   if (window.__DLINK__ && window.__DLINK__.build === BUILD) return;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -327,6 +327,34 @@
    * ⚠️ 副作用：会在用户网盘**根目录**留下一个副本，占空间，需要用户自己删。
    *    所以调用方必须把这件事告诉用户。
    */
+  /** 在自己网盘根目录按文件名找 fs_id。
+   *
+   * 用途：转存返回 errno=4「文件已转存」时，说明文件早就在网盘里了
+   * （实测这个分享第一次就撞上），此时不该报错，而是直接拿它的 fs_id 去取直链。
+   * 名字可能被百度加了 (1) 后缀，所以先精确匹配、再去后缀匹配。
+   */
+  async function baiduFindInRoot(name, bdstoken) {
+    if (!name) return '';
+    const q = new URLSearchParams({
+      dir: '/', order: 'name', desc: '0', num: '1000', page: '1',
+      channel: 'chunlei', web: '1', app_id: '250528',
+      clienttype: '0', bdstoken,
+    });
+    try {
+      const j = await (await fetch('https://pan.baidu.com/api/list?' + q,
+        { credentials: 'include' })).json();
+      if (j.errno !== 0) return '';
+      const list = j.list || [];
+      const exact = list.find((x) => x.server_filename === name);
+      if (exact) return String(exact.fs_id);
+      const stem = name.replace(/\(\d+\)(\.[^.]+)?$/, '$2');
+      const loose = list.find((x) => String(x.server_filename || '').replace(/\(\d+\)(\.[^.]+)?$/, '$2') === stem);
+      return loose ? String(loose.fs_id) : '';
+    } catch (e) {
+      return '';
+    }
+  }
+
   async function baiduTransferThenLink(surl, f, seckey, bdstoken) {
     if (!bdstoken) {
       return { ok: false, message: '没有 bdstoken（未登录？），无法转存' };
@@ -349,16 +377,30 @@
           }).toString(),
         });
       const tj = await tr.json();
-      if (tj.errno !== 0) {
+      let fid = '';
+      if (tj.errno === 0) {
+        const moved = (tj.extra && tj.extra.list) || [];
+        fid = moved[0] ? String(moved[0].to_fs_id || '') : '';
+        if (!fid) fid = await baiduFindInRoot(f.name, bdstoken);
+      } else if (tj.errno === 4) {
+        // 「文件已转存」：网盘里本来就有（可能上次转存留下的），直接找出来用
+        fid = await baiduFindInRoot(f.name, bdstoken);
+        if (!fid) {
+          return {
+            ok: false,
+            message: '网盘提示「已转存过」，但根目录里没找到同名文件'
+              + '（可能被改名或移走了）',
+            errno: 4,
+          };
+        }
+      } else {
         return {
           ok: false,
           message: `转存失败 errno=${tj.errno} ${tj.show_msg || ''}`.trim(),
           errno: tj.errno,
         };
       }
-      const moved = (tj.extra && tj.extra.list) || [];
-      const toFid = moved[0] ? String(moved[0].to_fs_id || '') : '';
-      const fid = toFid || String(f.fid);
+      if (!fid) return { ok: false, message: '转存成功但没拿到 fs_id' };
 
       const meta = await (await fetch(
         'https://pan.baidu.com/api/filemetas'

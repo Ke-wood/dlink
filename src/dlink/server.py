@@ -562,7 +562,17 @@ class Handler(BaseHTTPRequestHandler):
         if not fn:
             self._json(400, {"error": f"未知 action: {action}"})
             return
-        self._json(200, {"ok": bool(fn(tid))})
+        # 取消/删除后释放文件名预占：否则同名文件再下载会被改成 PC(1).7z，
+        # 分段目录对不上，续传直接失效（实测踩过）。
+        dest = None
+        if action in ("cancel", "remove"):
+            t = QUEUE.get(tid) if hasattr(QUEUE, "get") else None
+            if t is not None and t.path:
+                dest = Path(t.path)
+        ok = bool(fn(tid))
+        if ok and dest is not None:
+            release_dest(dest)
+        self._json(200, {"ok": ok})
 
 
 def serve() -> None:

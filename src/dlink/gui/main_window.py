@@ -345,18 +345,32 @@ class MainWindow(QMainWindow):
         QApplication.quit()
 
     def closeEvent(self, ev) -> None:
-        """关闭窗口 = 最小化到托盘（除非用户选了退出）。"""
+        """关闭窗口 = 最小化到托盘（除非用户选了退出）。
+
+        ⚠️ 但前提是托盘图标**真的显示着**。如果托盘不可用（某些远程桌面/
+        精简系统/图标被系统隐藏），把窗口 hide() 掉就等于让程序彻底失联 ——
+        用户既看不到窗口，也点不到托盘，只能去任务管理器杀进程。
+        所以托盘不可用时改为「最小化」，至少还能从任务栏叫回来。
+        """
         if getattr(self, "_really_quit", False):
             ev.accept()
             return
         ev.ignore()
+        tray_ok = (
+            hasattr(self, "tray")
+            and QSystemTrayIcon.isSystemTrayAvailable()
+            and self.tray.isVisible()
+        )
+        if not tray_ok:
+            self.showMinimized()
+            self.status.setText("托盘图标不可用，已最小化到任务栏（未隐藏）")
+            return
         self.hide()
-        if hasattr(self, "tray"):
-            self.tray.showMessage(
-                "DLink 仍在后台运行",
-                "下载不会中断。双击托盘图标可重新打开窗口。",
-                QSystemTrayIcon.Information, 3000,
-            )
+        self.tray.showMessage(
+            "DLink 仍在后台运行",
+            "下载不会中断。双击托盘图标可重新打开窗口。",
+            QSystemTrayIcon.Information, 3000,
+        )
 
     # ---------------- 数据刷新 ----------------
 

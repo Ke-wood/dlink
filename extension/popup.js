@@ -43,7 +43,10 @@ function renderList(items) {
     const meta = document.createElement('div');
     meta.className = 'meta';
     if (it.status === 'ok') {
-      meta.textContent = fmtSize(it.size) + (it.md5 ? ' · md5 ' + it.md5.slice(0, 8) : '');
+      const bits = [fmtSize(it.size)];
+      if (it.md5) bits.push('md5 ' + it.md5.slice(0, 8));
+      if (it.transferred) bits.push('已转存到网盘根目录，请自行删除');
+      meta.textContent = bits.filter(Boolean).join(' · ');
     } else {
       meta.textContent = '提取失败';
     }

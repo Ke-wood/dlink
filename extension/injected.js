@@ -17,7 +17,7 @@
   //   以前写的是 `if (window.__DLINK__) return;` —— 扩展更新后重新注入时，
   //   页面里的旧对象还活着，新代码直接被挡掉，用户必须手动 F5 才能生效，
   //   表现就是「明明更新了扩展，功能还是旧的」。
-  const BUILD = '0.2.3';
+  const BUILD = '0.2.4';
   if (window.__DLINK__ && window.__DLINK__.build === BUILD) return;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -318,6 +318,72 @@
     }
   }
 
+  /** 兜底：把分享文件**转存到用户自己网盘**，再从自己网盘取直链。
+   *
+   * 为什么需要：实测（2026-11-16）这个账号在 `sharedownload` 上会被要求
+   * 「验证码/身份验证」（errno 9019 needverify），但返回 errno=0 时 list 里
+   * 也不给 dlink。而「自己网盘的文件」取直链走的是另一套接口，不需要分享验证。
+   *
+   * ⚠️ 副作用：会在用户网盘**根目录**留下一个副本，占空间，需要用户自己删。
+   *    所以调用方必须把这件事告诉用户。
+   */
+  async function baiduTransferThenLink(surl, f, seckey, bdstoken) {
+    if (!bdstoken) {
+      return { ok: false, message: '没有 bdstoken（未登录？），无法转存' };
+    }
+    const q = (extra) => '?' + new URLSearchParams({
+      channel: 'chunlei', web: '1', app_id: '250528', clienttype: '0',
+      bdstoken, ...extra,
+    });
+    try {
+      const tr = await fetch(
+        'https://pan.baidu.com/share/transfer' + q({
+          shareid: String(f.shareid), from: String(f.uk),
+          sekey: seckey || '',
+        }),
+        {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            fsidlist: JSON.stringify([f.fid]), path: '/',
+          }).toString(),
+        });
+      const tj = await tr.json();
+      if (tj.errno !== 0) {
+        return {
+          ok: false,
+          message: `转存失败 errno=${tj.errno} ${tj.show_msg || ''}`.trim(),
+          errno: tj.errno,
+        };
+      }
+      const moved = (tj.extra && tj.extra.list) || [];
+      const toFid = moved[0] ? String(moved[0].to_fs_id || '') : '';
+      const fid = toFid || String(f.fid);
+
+      const meta = await (await fetch(
+        'https://pan.baidu.com/api/filemetas'
+        + q({ target: JSON.stringify([fid]), dlink: '1' }),
+        { credentials: 'include' })).json();
+      if (meta.errno !== 0) {
+        return { ok: false, message: `filemetas errno=${meta.errno}` };
+      }
+      const info = (meta.info || [])[0] || {};
+      if (!info.dlink) {
+        return { ok: false, message: 'transferred 但 filemetas 里没有 dlink' };
+      }
+      return {
+        ok: true,
+        url: info.dlink,
+        size: Number(info.size || f.size || 0),
+        md5: (info.md5 || '').toLowerCase(),
+        transferred: true,
+        name: info.server_filename || f.name,
+      };
+    } catch (e) {
+      return { ok: false, message: `转存请求失败：${e && e.message ? e.message : e}` };
+    }
+  }
+
   async function baiduDlink(surl, f, sekeyHint) {
     // 百度取直链需要 sign + timestamp
     const cfgR = await fetch(
@@ -351,6 +417,7 @@
     let dl = null;
     let attempts = 0;
     let shapeTried = [];
+    let emptyList = null;      // errno=0 但 list 里没有 dlink 时的原始条目
     for (const job of jobs) {
       if (attempts >= 6) break;
       const res = await baiduSharedownload(surl, f, job.sk, sign, timestamp, job.pl);
@@ -374,10 +441,40 @@
           },
         };
       }
+      if (Number(dl && dl.errno) === 0) {
+        // errno=0 说明接口通了，但 list[0] 里没有 dlink —— 记下来看它给了什么
+        emptyList = (dl.list && dl.list[0]) || {};
+      }
       if (!RETRY_ERRNOS.includes(Number(dl && dl.errno))) break;
     }
 
     const errno = Number(dl && dl.errno);
+
+    // 只在「接口通了但没给直链」或「被要求验证」时才转存，
+    // 避免因为一次网络抖动就在用户网盘里凭空多出文件。
+    const needTransfer = !!emptyList || errno === 9019 || errno === -6;
+    const bdstoken = needTransfer ? await baiduBdstoken() : '';
+    const tr = needTransfer
+      ? await baiduTransferThenLink(surl, f, sekList[0] || '', bdstoken)
+      : { ok: false, message: '未尝试（错误类型不需要转存）' };
+    if (tr.ok) {
+      return {
+        ok: true,
+        item: {
+          url: tr.url,
+          name: tr.name || f.name,
+          size: tr.size || f.size || 0,
+          md5: tr.md5 || f.md5 || '',
+          cookies: await pickCookies('baidu'),
+          headers: { Referer: 'https://pan.baidu.com/' },
+          expires_at: expiresAtFor('baidu'),
+          // 转存下载拿不到分享页信息，过期后没法自动续链
+          refresh: null,
+          transferred: true,
+        },
+      };
+    }
+
     const detail = (dl && (dl.show_msg || dl.errmsg)) || '';
     const shapeInfo = shapeTried.map((x) => `${x.shape}:${x.errno}`).join('/');
     let msg = `sharedownload errno=${dl && dl.errno} ${detail}`.trim();
@@ -393,6 +490,12 @@
       msg += '｜百度判定「需要验证」：网页形状和客户端形状都被拒。'
         + '这通常意味着该账号的下载接口要求二次验证（网页上会弹验证码）';
     }
+    if (emptyList) {
+      msg += `；list[0] 里没有 dlink，字段=${Object.keys(emptyList).join(',')}`
+        + `${emptyList.error_code ? ` error_code=${emptyList.error_code}` : ''}`
+        + `${emptyList.error_msg ? ` ${emptyList.error_msg}` : ''}`;
+    }
+    msg += `；转存也失败：${tr.message}`;
     return { ok: false, message: msg };
   }
 
@@ -798,6 +901,10 @@
         errno: dl && dl.errno,
         errmsg: (dl && (dl.errmsg || dl.show_msg)) || '',
         keys: dl ? Object.keys(dl) : [],
+        list0: dl && dl.list && dl.list[0]
+          ? Object.fromEntries(Object.entries(dl.list[0]).map(([k, v]) => [
+            k, k === 'dlink' ? `<len ${String(v).length}>` : v]))
+          : null,
       };
     },
     // 诊断用：分享页 Console 里跑 __DLINK__.probe()，看 sekey 各来源有没有

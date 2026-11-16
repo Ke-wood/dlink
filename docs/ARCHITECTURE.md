@@ -69,11 +69,11 @@
 {
   "version": 1,
   "platform": "baidu",
-  "title": "PC.7z",
+  "title": "sample.bin",
   "items": [
     {
       "url": "https://d.pcs.baidu.com/file/...",
-      "filename": "PC.7z",
+      "filename": "sample.bin",
       "size": 29620737,
       "sha1": "",
       "md5": "a1b2c3d4e5o6f7a8b9c0d1e2f3a4b5c6",

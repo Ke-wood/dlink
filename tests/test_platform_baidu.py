@@ -24,7 +24,7 @@ from dlink.platforms.baidu import BaiduPlatform, BaiduSession
 
 @pytest.mark.parametrize("url,expected", [
     ("https://pan.baidu.com/s/1AbCdEfGhIjKlMnOpQrS", "1AbCdEfGhIjKlMnOpQrS"),
-    ("https://pan.baidu.com/s/1AbCdEfGhIjKlMnOpQrS?pwd=zzav", "1AbCdEfGhIjKlMnOpQrS"),
+    ("https://pan.baidu.com/s/1AbCdEfGhIjKlMnOpQrS?pwd=a1b2", "1AbCdEfGhIjKlMnOpQrS"),
     ("https://yun.baidu.com/s/1abc_def-123", "1abc_def-123"),
 ])
 def test_parse_share_key(url, expected):
@@ -38,7 +38,7 @@ def test_parse_share_key_invalid():
 
 
 @pytest.mark.parametrize("url,expected", [
-    ("https://pan.baidu.com/s/1abc?pwd=zzav", "zzav"),
+    ("https://pan.baidu.com/s/1abc?pwd=a1b2", "a1b2"),
     ("https://pan.baidu.com/s/1abc", None),
     ("https://pan.baidu.com/s/1abc#list/path=%2F&pwd=ab12", "ab12"),
 ])
@@ -149,7 +149,7 @@ def test_share_context_ok(monkeypatch):
     payload = {"errno": 0, "shareid": 5317000099, "uk": 1100709536112,
                "file_list": [{"server_filename": "x", "isdir": 0, "fs_id": 1}]}
     monkeypatch.setattr(p._http, "get", lambda *a, **k: _FakeResp(payload))
-    ctx = p._share_context("1abc", "zzav")
+    ctx = p._share_context("1abc", "a1b2")
     assert ctx["shareid"] == 5317000099
     assert ctx["share_uk"] == 1100709536112
     assert len(ctx["file_list"]) == 1

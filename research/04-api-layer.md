@@ -2,7 +2,7 @@
 
 > 调研日期：2026-11-15
 > 测试账号：普通用户（非会员，`vip_level:4` / `is_vip:0` / `vip_type:1` / `current_mvip:[]`）
-> 测试对象：`/Game/VRQ1/PC.7z`，29,620,737 字节，MD5 `a1b2c3d4e5o6f7a8b9c0d1e2f3a4b5c6`
+> 测试对象：`/Game/sample.bin`，约 29.6 MB，MD5 `a1b2c3d4e5o6f7a8b9c0d1e2f3a4b5c6`
 > 标注体系：✅ 本机实测 / ⚠️ 源码或资料佐证 / ❓ 未验证
 
 ---

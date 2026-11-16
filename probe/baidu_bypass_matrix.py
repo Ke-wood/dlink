@@ -153,7 +153,7 @@ def main() -> None:
     print('\n[E] 老 PCS 接口 /rest/2.0/pcs/file?method=download')
     for ua, name in [(UA_BROWSER, 'browser'), (UA_PAN, 'pan.baidu.com')]:
         u = (f'https://pcs.baidu.com/rest/2.0/pcs/file?method=download'
-             f'&app_id=250528&path=%2FPC.7z')
+             f'&app_id=250528&path=%2Fsample.bin')
         r = measure(u, ck, ua=ua, label=f'pcs/file UA={name}', seconds=6)
         results.append(r); print(fmt(r))
 

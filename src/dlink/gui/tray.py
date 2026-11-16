@@ -21,8 +21,9 @@ from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from .theme import GRAY_400, GRAY_500, GRAY_600, GRAY_700, WHITE
+from ..resources import assets_dir
 
-ASSETS = Path(__file__).parent / "assets"
+ASSETS = assets_dir()
 
 
 def _base_icon(size: int = 32) -> QPixmap:

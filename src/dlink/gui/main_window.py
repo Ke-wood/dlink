@@ -26,6 +26,7 @@ from .api import ApiClient
 from .add_link_dialog import AddLinkDialog
 from .settings_dialog import SettingsDialog
 from .tray import TrayController
+from ..resources import asset_path
 
 # ---- 黑白主题（统一从 theme.py 取）----
 from .theme import (  # noqa: E402
@@ -163,10 +164,10 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("DLink 下载器")
-        _ico = Path(__file__).parent / "assets" / "icon256.png"
+        _ico = asset_path("icon256.png")
         if _ico.exists():
             self.setWindowIcon(QIcon(str(_ico)))
-        self.resize(1400, 760)
+        self.resize(1500, 780)
 
         self.api = ApiClient()
         self.smoother = SpeedSmoother()
@@ -229,11 +230,11 @@ class MainWindow(QMainWindow):
 
         hdr = self.table.horizontalHeader()
         widths = {
-            "名称": (340, 200, 900),
-            "进度": (150, 130, 200),
+            "名称": (280, 180, 900),
+            "进度": (140, 120, 190),
             "速度": (100, 80, 140),
-            "大小": (170, 140, 240),
-            "剩余时间": (100, 85, 140),
+            "大小": (160, 130, 230),
+            "剩余时间": (95, 80, 130),
             "直链": (95, 80, 130),
             "平台": (85, 70, 120),
             "状态": (85, 70, 120),
@@ -260,17 +261,60 @@ class MainWindow(QMainWindow):
 
     def _build_menu(self) -> None:
         m = self.menuBar().addMenu("文件")
+        a_open_dir = QAction("打开下载目录", self)
+        a_open_dir.triggered.connect(self._open_dir)
+        m.addAction(a_open_dir)
         a = QAction("设置", self)
         a.triggered.connect(self._open_settings)
         m.addAction(a)
+        m.addSeparator()
         a2 = QAction("退出", self)
-        a2.triggered.connect(self.close)
+        a2.triggered.connect(self._quit_app)
         m.addAction(a2)
 
         h = self.menuBar().addMenu("帮助")
+        a_ext = QAction("导出浏览器扩展…", self)
+        a_ext.triggered.connect(self._export_extension)
+        h.addAction(a_ext)
+        h.addSeparator()
         a3 = QAction("平台推荐并发说明", self)
         a3.triggered.connect(self._show_help)
         h.addAction(a3)
+        a4 = QAction("关于 DLink", self)
+        a4.triggered.connect(self._show_about)
+        h.addAction(a4)
+
+    def _export_extension(self) -> None:
+        """把内置的浏览器扩展释放到用户选的目录。"""
+        from PySide6.QtWidgets import QFileDialog
+
+        from .extension_export import ExtensionExportError, export_extension
+
+        target = QFileDialog.getExistingDirectory(
+            self, "选择导出位置（会创建 dlink-extension 子文件夹）")
+        if not target:
+            return
+        try:
+            dest, n = export_extension(Path(target))
+        except ExtensionExportError as e:
+            QMessageBox.warning(self, "导出失败", str(e))
+            return
+        QMessageBox.information(
+            self, "导出完成",
+            f"已导出 {n} 个文件到：\n{dest}\n\n"
+            "接下来在浏览器里安装：\n"
+            "1. 打开 edge://extensions/ 或 chrome://extensions/\n"
+            "2. 开启「开发人员模式」\n"
+            "3. 点「加载解压缩的扩展」，选择上面的文件夹")
+
+    def _show_about(self) -> None:
+        from dlink import __version__ as ver
+        QMessageBox.about(
+            self, "关于 DLink",
+            f"<b>DLink 下载器</b> v{ver}<br><br>"
+            "网盘分享链接 → 直链 → 多线程下载。<br>"
+            "浏览器扩展负责取直链，本程序负责下载。<br><br>"
+            "<span style='color:#888'>不劫持浏览器原生下载</span>")
 
     # ---------------- 托盘 ----------------
 

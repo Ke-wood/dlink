@@ -27,7 +27,8 @@ def main() -> int:
     app.setStyleSheet(STYLESHEET)
 
     # 应用图标（任务栏/Alt-Tab）
-    ico = Path(__file__).parent / "assets" / "icon256.png"
+    from ..resources import asset_path
+    ico = asset_path("icon256.png")
     if ico.exists():
         app.setWindowIcon(QIcon(str(ico)))
 

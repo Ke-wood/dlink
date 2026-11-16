@@ -2,7 +2,7 @@
 
 为什么要单独做这件事：
     百度 API 返回的 `md5` 字段是**内部格式**，不是标准 MD5。
-    实测：PC.7z 的 API md5 = `a1b2c3d4e5o6f7a8b9c0d1e2f3a4b5c6`
+    实测：sample.bin 的 API md5 = `a1b2c3d4e5o6f7a8b9c0d1e2f3a4b5c6`
           （第 10 位是字母 `o`，不是十六进制）
           而真实文件 MD5  = `e3b0c44298fc1c149afbf4c8996fb924`
           （响应头 Content-MD5 也是这个）

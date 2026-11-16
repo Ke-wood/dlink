@@ -10,7 +10,7 @@
 3. 点 **「加载解压缩的扩展」**
 4. 选择目录：
    ```
-   D:\plan\HANDOFF-direct-link-tool\extension
+   <本仓库>/extension
    ```
 5. 装好后工具栏会出现蓝色下载箭头图标（可能需要点「扩展」拼图图标固定）
 
@@ -21,7 +21,7 @@
 打开终端（PowerShell 或 CMD）：
 
 ```powershell
-cd D:\plan\HANDOFF-direct-link-tool
+cd <本仓库>
 $env:PYTHONPATH="src"
 python src\dlink\server.py
 ```

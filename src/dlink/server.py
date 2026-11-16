@@ -28,25 +28,23 @@ from dlink.host_learn import effective_workers as learn_workers  # noqa: E402
 from dlink.host_learn import all_hosts, forget as forget_host, record as record_host  # noqa: E402
 from dlink.profile import all_profiles, get_profile, reset_profile, save_profile  # noqa: E402
 from dlink.refresh import RefreshManager  # noqa: E402
+from dlink.resources import default_download_dir  # noqa: E402
+from dlink.settings_store import load_settings, save_settings  # noqa: E402
 from dlink.task_queue import FAILED, NEED_REFRESH, QUEUED, Queue, Task  # noqa: E402
 
 PORT_RANGE = (8765, 8766, 8767, 8768, 8769)
 VERSION = "0.1.0"
 DEFAULT_MAX_CONCURRENT = 3
 
-QUEUE = Queue(max_concurrent=DEFAULT_MAX_CONCURRENT)
-REFRESH = RefreshManager()
-
 # 保存目录等全局设置（可由 GUI 修改）
-SETTINGS: dict = {
-    "save_dir": os.path.expanduser("~/Downloads/DLink"),
-    "max_concurrent": DEFAULT_MAX_CONCURRENT,
-    "verify": True,
-    "open_folder_when_done": False,
-    # 夸克/UC 转存的临时文件：下载完成后是否自动清理（用户可选）
-    "auto_cleanup_after_download": False,
-}
+# 设置来自磁盘（%LOCALAPPDATA%/dlink/settings.json），没文件时用内置默认。
+# ⚠️ 必须在这里加载而不是写死字面量 —— 否则用户改了保存目录，重启就还原。
+SETTINGS: dict = load_settings()
 SETTINGS_LOCK = threading.Lock()
+
+# 并发数取磁盘设置里的值（用户改过就沿用）
+QUEUE = Queue(max_concurrent=max(1, int(SETTINGS.get("max_concurrent") or DEFAULT_MAX_CONCURRENT)))
+REFRESH = RefreshManager()
 
 # 扩展最后联系时间（GUI 据此判断扩展是否活着，用于"续链没人理"的诊断）
 LAST_EXTENSION_CONTACT = {"ts": 0.0, "ua": ""}
@@ -402,18 +400,38 @@ class Handler(BaseHTTPRequestHandler):
                          "profile": asdict(get_profile(platform))})
 
     def _handle_settings(self, payload: dict) -> None:
+        """更新设置并**持久化到磁盘**。
+
+        关键：save_dir 必须落盘。否则用户改了下载目录，重启 exe 就还原
+        （这是实测确认过的 bug）。
+        """
+        patch = {}
         with SETTINGS_LOCK:
             for k in ("save_dir", "max_concurrent", "verify",
-                  "open_folder_when_done", "auto_cleanup_after_download"):
+                      "open_folder_when_done", "auto_cleanup_after_download"):
                 if k in payload:
                     SETTINGS[k] = payload[k]
+                    patch[k] = payload[k]
             if "max_concurrent" in payload:
                 try:
                     QUEUE.set_max_concurrent(int(payload["max_concurrent"]))
                 except (TypeError, ValueError):
                     pass
             snap = dict(SETTINGS)
-        self._json(200, {"ok": True, "settings": snap})
+
+        saved_path = ""
+        save_error = ""
+        if patch:
+            try:
+                saved_path = str(save_settings(patch))
+            except OSError as e:
+                # 磁盘只读/权限不足时不能让整个请求失败，但要如实告知
+                save_error = f"设置已生效但未能保存到磁盘：{e}"
+
+        resp = {"ok": True, "settings": snap, "saved_to": saved_path}
+        if save_error:
+            resp["warning"] = save_error
+        self._json(200, resp)
 
     def _handle_refresh(self, payload: dict) -> None:
         """扩展取到新直链后回填。payload: {task_id, url, cookies, headers, size, expires_at}"""

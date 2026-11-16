@@ -239,3 +239,43 @@ GET <rt=sh 直链> + Referer: https://pan.baidu.com/   （不带任何 cookie）
 6. `docs/PLATFORMS.md` 补实测数据（本文件）
 7. `README.md` 平台表加一行
 8. `tests/test_platform_<name>.py`
+
+---
+
+## 9. 百度直链的两套签名（2026-11-16 实测，重要）
+
+百度 CDN 直链有两种签名，**能不能脱离浏览器使用**完全取决于用哪套：
+
+| 来源 | sign 前缀 | 关键参数 | 是否需要 cookie | 能否外部使用 |
+|---|---|---|---|---|
+| 网页 `api/filemetas` | `FDtAER-` | `clienttype=0` | **需要 BDUSS** | ❌ 一律 `31362 sign error` |
+| xpan `rest/2.0/xpan/multimedia?method=filemetas` | `FDtAERK-` | `access_token=123.xxx`、`vuk`、`origin_appid`、`file_type` | **不需要** | ✅ 302 → `*.baidupcs.com` → 206 |
+
+### 网页通道那套为什么用不了
+
+实测把一个 `FDtAER-` 直链（连 29MB 的无关文件也一样）在**同一个浏览器、同一秒**打开：
+
+```
+{"error_code":31362,"error_msg":"sign error"}
+```
+
+换成 `clienttype=12`、补 Referer、从网盘页点击过去 —— 全部 31362。
+不带 cookie 则是 `31045 user not exists`。结论：网页通道的直链**只能在网页自身的下载流程里消费**。
+
+### xpan 那套怎么才算「可用」
+
+```
+GET https://d.pcs.baidu.com/file/<md5>?fid=...&sign=FDtAERK-...&access_token=123.xxx
+  → 302 https://<node>.baidupcs.com/file/...
+  → 206 Content-Range: bytes 0-1023/1675346578
+```
+
+**不需要任何 cookie**，UA 不敏感（`pan.baidu.com` / `netdisk` 都行）。
+
+### 代价与限制
+
+- `access_token` 只能通过**百度开放平台 OAuth** 换取（设备码授权 → refresh_token 续期）。
+  网页会话里拿不到：`gettemplatevariable`、`window.locals`、`/api/oauth/gettoken` 都没有。
+- 即使有 token，**速度仍是账号级限额**（免费账号约 80–130 KB/s）。token 解决的是「能不能下」，不是「下得快」。
+- `api/filemetas` 的参数名是 **`fsids`**，不是 `target`（用 `target` 会对任何文件返回
+  `errno=12 / info:[{errno:31021}]`，极易误判成「文件被屏蔽」）。

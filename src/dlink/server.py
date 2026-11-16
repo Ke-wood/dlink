@@ -224,10 +224,12 @@ def run_task(task: Task) -> None:
                 task.refresh_attempts = attempts + 1
                 task.error = (f"直链可能已失效（{_short(e)}），"
                               f"已请求扩展重新取链（第 {attempts + 1} 次）")
-                return
+                return          # ★ 续链会接着写同一个文件，预占要保留
             task.error = (f"直链失效且无法自动续链：{_short(e)}"
                           "（超出重试次数，或该平台没有 refresh 信息）")
-            raise
+        # 真失败：释放文件名预占。否则每重试一次，名字就往后挪一格
+        # （实测：连续失败几次后文件被存成 PC(3).7z）。
+        release_dest(dest)
         raise
 
     # 按主机学习：只在普通链接上做（网盘有平台级策略，不需要按 CDN 域名学）
@@ -244,6 +246,7 @@ def run_task(task: Task) -> None:
 
     if not res.get("ok"):
         task.error = res.get("error") or "下载失败"
+        release_dest(dest)
     else:
         # 下载成功 → 按设置决定是否清理转存产生的临时文件
         with SETTINGS_LOCK:

@@ -324,9 +324,28 @@ def _build_headers(link: DirectLink, start: int, end: int) -> dict:
     if not any(k.lower() == "user-agent" for k in headers):
         headers["User-Agent"] = DEFAULT_UA
 
-    # Referer：link.headers 里有就用（上面已经合过），这里只补默认值
+    # 百度带 access_token 的直链（xpan 通道，sign 以 FDtAERK 开头）：
+    # 客户端惯例是 UA=pan.baidu.com。实测 2026-11-16：
+    #   这条链会 302 跳到 *.baidupcs.com，Range 请求直接 206 拿到字节，
+    #   **完全不需要 cookie**；而网页通道的 filemetas 直链（FDtAER）
+    #   脱离网页上下文一律 31362 sign error，用不了。
+    # 粘这类链接进「添加链接」时，靠这条规则自动补 UA。
+    if "access_token=" in (link.url or "") and "baidu" in (link.url or ""):
+        headers["User-Agent"] = "pan.baidu.com"
+
+    # Referer：link.headers 里有就用（上面已经合过），这里按域名补默认值。
+    # ⚠️ 不能一律用微云的 Referer：实测拿 https://www.weiyun.com/ 去请求
+    #    百度 CDN 会直接回 31326 user is not authorized, hitcode:109。
     if not any(k.lower() == "referer" for k in headers):
-        headers["Referer"] = "https://www.weiyun.com/"
+        url_l = (link.url or "").lower()
+        if "baidu" in url_l:
+            headers["Referer"] = "https://pan.baidu.com/"
+        elif "quark" in url_l:
+            headers["Referer"] = "https://pan.quark.cn/"
+        elif "uc.cn" in url_l:
+            headers["Referer"] = "https://drive.uc.cn/"
+        else:
+            headers["Referer"] = "https://www.weiyun.com/"
 
     # cookies 拼成 Cookie 头（若 headers 里已手写 Cookie，则合并而不是覆盖）
     if link.cookies:

@@ -361,6 +361,8 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_profile_update(payload)
         elif path == "/api/settings":
             self._handle_settings(payload)
+        elif path == "/api/cookies":
+            self._handle_cookies(payload)
         elif path == "/api/task/action":
             self._handle_task_action(payload)
         elif path == "/api/refresh":
@@ -431,6 +433,39 @@ class Handler(BaseHTTPRequestHandler):
             "skipped_ids": skipped,
             "save_dir": save_dir,
         })
+
+    def _handle_cookies(self, payload: dict) -> None:
+        """接收扩展 `chrome.cookies.getAll()` 的结果并存到本机。
+
+        为什么需要：微云的 `g_tk` 由 `skey` 算，而 `skey` 是 HttpOnly ——
+        页面 JS 与 Python 都读不到，只有扩展能取。本机单人使用，直接把 cookie
+        固化到 `%LOCALAPPDATA%/dlink/cookies_<platform>.json`，
+        Python 侧（以及下载器）就能离线复用，不必每次开浏览器。
+
+        ⚠️ 这些是**凭据**：只存在本机用户目录，不进仓库、不打日志。
+        """
+        platform = str(payload.get("platform") or "").strip()
+        cookies = payload.get("cookies") or []
+        if not platform or not isinstance(cookies, list):
+            self._json(400, {"error": "需要 platform 与 cookies 数组"})
+            return
+        # 只保留 name/value/domain/path，去掉敏感无关字段
+        slim = [{"name": c.get("name"), "value": c.get("value"),
+                 "domain": c.get("domain"), "path": c.get("path")}
+                for c in cookies if isinstance(c, dict) and c.get("name")]
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".config") / "dlink"
+        base.mkdir(parents=True, exist_ok=True)
+        dest = base / f"cookies_{platform}.json"
+        tmp = dest.with_suffix(".tmp")
+        tmp.write_text(json.dumps({platform: slim}, ensure_ascii=False, indent=2),
+                       encoding="utf-8")
+        os.replace(tmp, dest)
+        try:
+            os.chmod(dest, 0o600)
+        except OSError:
+            pass
+        self._json(200, {"ok": True, "saved_to": str(dest), "count": len(slim),
+                         "names": sorted({c["name"] for c in slim})})
 
     def _handle_profile_update(self, payload: dict) -> None:
         platform = payload.get("platform")

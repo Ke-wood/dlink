@@ -192,22 +192,23 @@
 
   /** 发一次 sharedownload；网络异常也归成业务错误，交给上层换 sekey 重试 */
   async function sharedownloadOnce(surl, f, sekey, jsToken, sign, timestamp, pathList) {
+    // 参数严格对齐「实测可用」的 AList 写法：
+    //   · 不带 bdstoken —— 空串会被当成「提供了但无效」，直接 9019 need verify
+    //   · 不带页面 jsToken —— 过期的 jsToken 同样被判成校验失败
     const body = new URLSearchParams({
       encrypt: '0', product: 'share',
       uk: String(f.uk), primaryid: String(f.shareid),
       fid_list: JSON.stringify([f.fid]),
-      // 根目录文件传空串；子目录文件必须传父目录的 JSON 数组
-      path_list: pathList || '',
       extra: JSON.stringify({ sekey }),
-      type: 'nolimit',          // 对齐 AList 的可用写法
+      type: 'nolimit',
     });
-    if (jsToken) body.set('jsToken', jsToken);
+    // path_list：根目录不传；子目录文件才需要
     if (pathList) body.set('path_list', pathList);
     try {
       const r = await fetch(
         'https://pan.baidu.com/api/sharedownload?' + new URLSearchParams({
           sign, timestamp: String(timestamp), channel: 'chunlei',
-          web: '1', app_id: '250528', clienttype: '12', bdstoken: '',
+          web: '1', app_id: '250528', clienttype: '12',
         }),
         {
           method: 'POST', credentials: 'include',
@@ -319,7 +320,15 @@
     }
 
     const errno = Number(dl && dl.errno);
-    let msg = `sharedownload errno=${dl && dl.errno} ${(dl && dl.show_msg) || ''}`.trim();
+    const detail = (dl && (dl.show_msg || dl.errmsg)) || '';
+    let msg = `sharedownload errno=${dl && dl.errno} ${detail}`.trim();
+    if (!detail && dl) {
+      // 没有可读消息时把原始响应带出来（截断，避免刷屏），便于线上定位
+      try {
+        const raw = JSON.stringify(dl);
+        msg += ` raw=${raw.length > 160 ? raw.slice(0, 160) + '…' : raw}`;
+      } catch (e) { /* ignore */ }
+    }
     if (errno === -20) {
       // 百度把「验证状态对不上」和「参数对不上」都报成「验证码输入错误」
       msg += `｜试了 ${attempts} 次（${tried.length} 个 sekey 来源`
@@ -329,6 +338,9 @@
         + '仍失败则这个分享可能只允许转存或客户端下载';
     } else if (errno === -9 || errno === 105) {
       msg += '｜提取码错误或未通过：确认链接里的 ?pwd= 是否正确';
+    } else if (errno === 9019) {
+      msg += '｜百度要求「需要验证」：通常是登录态不被认可或该分享限流。'
+        + '可试：刷新页面确认还处于登录状态；或先用浏览器手动下载一次再重试';
     }
     return { ok: false, message: msg };
   }
@@ -683,6 +695,55 @@
       }
     },
     // 诊断用
+    /** 一步到位的取链诊断：在分享页 Console 跑
+     *    await __DLINK__.debugBaidu()
+     *  它会把 wxlist 上下文、目标文件、sharedownload 的原始返回都打出来，
+     *  但不含任何 cookie 值，可以安全贴出来。
+     */
+    debugBaidu: async (shareUrl) => {
+      const u = new URL(shareUrl || location.href);
+      const surl = (u.pathname.match(/\/s\/([A-Za-z0-9_-]+)/) || [])[1];
+      const pwd = u.searchParams.get('pwd') || '';
+      if (!surl) return { ok: false, message: '无法解析分享 ID' };
+      const ctx = await baiduShareContextFromApi(surl, pwd);
+      if (!ctx.ok) return { step: 'wxlist', ...ctx };
+
+      const first = (ctx.rootFiles || [])[0] || {};
+      let file = {
+        fid: String(first.fs_id), name: first.server_filename,
+        uk: ctx.uk, shareid: ctx.shareid, parent: '',
+      };
+      let listed = 1;
+      if (Number(first.isdir) === 1) {
+        const items = await baiduList(surl, ctx.shareid, ctx.uk, first.path);
+        listed = items.length;
+        const f2 = items.find((x) => Number(x.isdir) !== 1);
+        if (!f2) return { step: 'list', ok: false, message: '子目录里没有文件', items: listed };
+        file = {
+          fid: String(f2.fs_id), name: f2.server_filename,
+          uk: ctx.uk, shareid: ctx.shareid, parent: first.path,
+        };
+      }
+
+      const cfg = await (await fetch(
+        'https://pan.baidu.com/share/tplconfig?' + new URLSearchParams({
+          surl, fields: 'sign,timestamp', view_mode: '1', channel: 'chunlei',
+          web: '1', app_id: '250528', bdstoken: '',
+        }), { credentials: 'include' })).json();
+      if (cfg.errno !== 0) return { step: 'tplconfig', errno: cfg.errno };
+      const sign = (cfg.data || {}).sign;
+      const ts = (cfg.data || {}).timestamp;
+      const dl = await sharedownloadOnce(surl, file, ctx.seckey, '', sign, ts, '');
+      return {
+        step: 'sharedownload',
+        file: file.name,
+        listed,
+        seckeyLen: (ctx.seckey || '').length,
+        errno: dl && dl.errno,
+        errmsg: (dl && (dl.errmsg || dl.show_msg)) || '',
+        keys: dl ? Object.keys(dl) : [],
+      };
+    },
     // 诊断用：分享页 Console 里跑 __DLINK__.probe()，看 sekey 各来源有没有
     probe: () => ({
       url: location.href,

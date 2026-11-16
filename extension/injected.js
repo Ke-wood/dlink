@@ -36,7 +36,7 @@
 
   // ============ 百度 ============
 
-  async function baiduResolve(shareUrl, maxLinks) {
+  async function baiduResolve(shareUrl, maxLinks, opts) {
     const u = new URL(shareUrl);
     const surl = (u.pathname.match(/\/s\/([A-Za-z0-9_-]+)/) || [])[1];
     if (!surl) return { ok: false, code: 'BAD_URL', message: '无法解析分享 ID' };
@@ -94,7 +94,7 @@
       ? maxLinks : files.length;
     const out = [];
     for (const f of files.slice(0, limit)) {
-      const link = await baiduDlink(surl, f);
+      const link = await baiduDlink(surl, f, opts && opts.sekey);
       if (link.ok) out.push(link.item);
       else out.push({ ...f, error: link.message });
     }
@@ -154,7 +154,59 @@
     return j.list || [];
   }
 
-  async function baiduDlink(surl, f) {
+  /** sekey 候选列表（＝分享提取码验证通过后的凭证）。
+   *
+   * 实测（2026-11-16）：只读 `window.currentSekey` 不够 ——
+   *   · 部分页面版本不把它挂到 window 上；
+   *   · 同一标签页里 SPA 路由切过别的分享时，它留着**上一个分享**的值。
+   * 两种情况下 `/api/sharedownload` 都返回 errno=-20「验证码输入错误，请重试」，
+   * 而这句提示会让人误以为是提取码打错了。
+   * 所以收集多个来源，遇到 -20 就换下一个来源重试。
+   */
+  function baiduSekeyCandidates(sekeyHint) {
+    const out = [];
+    const push = (v) => {
+      if (!v) return;
+      const s = String(v).trim();
+      if (s && !out.includes(s)) out.push(s);
+    };
+    try {
+      push(window.currentSekey);                       // 页面变量：最准，但可能过期
+      push(sekeyHint);                                 // background 读的 BDCLND（含 HttpOnly）
+      push(window.yunData && window.yunData.sekey);
+      const m = String(document.cookie || '').match(/(?:^|;\s*)BDCLND=([^;]+)/);
+      if (m && m[1]) push(decodeURIComponent(m[1]));   // 页面能读到的 BDCLND
+    } catch (e) { /* 读不到就少一个候选 */ }
+    return out;
+  }
+
+  /** 发一次 sharedownload；网络异常也归成业务错误，交给上层换 sekey 重试 */
+  async function sharedownloadOnce(surl, f, sekey, jsToken, sign, timestamp) {
+    const body = new URLSearchParams({
+      encrypt: '0', product: 'share',
+      uk: String(f.uk), primaryid: String(f.shareid),
+      fid_list: JSON.stringify([f.fid]), path_list: '',
+      extra: JSON.stringify({ sekey }),
+    });
+    if (jsToken) body.set('jsToken', jsToken);
+    try {
+      const r = await fetch(
+        'https://pan.baidu.com/api/sharedownload?' + new URLSearchParams({
+          sign, timestamp: String(timestamp), channel: 'chunlei',
+          web: '1', app_id: '250528', clienttype: '0', bdstoken: '',
+        }),
+        {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: body.toString(),
+        });
+      return await r.json();
+    } catch (e) {
+      return { errno: -1, show_msg: `请求失败：${e && e.message ? e.message : e}` };
+    }
+  }
+
+  async function baiduDlink(surl, f, sekeyHint) {
     // 百度取直链需要 sign + timestamp
     const cfgR = await fetch(
       'https://pan.baidu.com/share/tplconfig?' + new URLSearchParams({
@@ -166,52 +218,47 @@
       return { ok: false, message: `tplconfig errno=${cfg.errno}` };
     }
     const { sign, timestamp } = cfg.data || {};
-
-    // 尝试分享直下（需要 jsToken / sekey，页面里能拿到）
     const jsToken = window.jsToken || '';
-    const sekey = window.currentSekey || '';
-    const body = new URLSearchParams({
-      encrypt: '0', product: 'share',
-      uk: String(f.uk), primaryid: String(f.shareid),
-      fid_list: JSON.stringify([f.fid]), path_list: '',
-      extra: JSON.stringify({ sekey }),
-    });
-    if (jsToken) body.set('jsToken', jsToken);
 
-    const dlR = await fetch(
-      'https://pan.baidu.com/api/sharedownload?' + new URLSearchParams({
-        sign, timestamp: String(timestamp), channel: 'chunlei',
-        web: '1', app_id: '250528', clienttype: '0', bdstoken: '',
-      }),
-      {
-        method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: body.toString(),
-      });
-    const dl = await dlR.json();
-
-    if (dl.errno === 0 && dl.list && dl.list[0] && dl.list[0].dlink) {
-      const it = dl.list[0];
-      return {
-        ok: true,
-        item: {
-          url: it.dlink,
-          name: f.name,
-          size: Number(it.size || f.size || 0),
-          md5: (it.md5 || f.md5 || '').toLowerCase(),
-          // 直链必须带 BDUSS 系 cookie，否则 403 error_code:31045
-          cookies: await pickCookies('baidu'),
-          headers: { Referer: 'https://pan.baidu.com/' },
-          expires_at: expiresAtFor('baidu'),
-          refresh: { platform: 'baidu', shareUrl: surl, fid: f.fid },
-        },
-      };
+    // 逐个候选试；-20 才换源（其它错误换也没用，白白多打一次接口）
+    const candidates = baiduSekeyCandidates(sekeyHint);
+    const tried = candidates.length ? candidates : [''];
+    let dl = null;
+    for (const sekey of tried) {
+      dl = await sharedownloadOnce(surl, f, sekey, jsToken, sign, timestamp);
+      if (dl.errno === 0 && dl.list && dl.list[0] && dl.list[0].dlink) {
+        const it = dl.list[0];
+        return {
+          ok: true,
+          item: {
+            url: it.dlink,
+            name: f.name,
+            size: Number(it.size || f.size || 0),
+            md5: (it.md5 || f.md5 || '').toLowerCase(),
+            // 直链必须带 BDUSS 系 cookie，否则 403 error_code:31045
+            cookies: await pickCookies('baidu'),
+            headers: { Referer: 'https://pan.baidu.com/' },
+            expires_at: expiresAtFor('baidu'),
+            refresh: { platform: 'baidu', shareUrl: surl, fid: f.fid },
+          },
+        };
+      }
+      if (Number(dl.errno) !== -20) break;
     }
-    return {
-      ok: false,
-      message: `sharedownload errno=${dl.errno} ${dl.show_msg || ''}`,
-    };
+
+    const errno = Number(dl && dl.errno);
+    let msg = `sharedownload errno=${dl && dl.errno} ${(dl && dl.show_msg) || ''}`.trim();
+    if (errno === -20) {
+      // 百度把「验证状态对不上」也报成「验证码输入错误」，必须给出可操作的下一步
+      msg += candidates.length
+        ? `｜试过 ${tried.length} 个 sekey 来源都被拒：在分享页重新输入提取码（或过掉图形验证码），按 F5 刷新页面后再点「提取直链」`
+        : '｜页面里没拿到 sekey（提取码还没通过）：先在分享页输入提取码、看到文件列表后按 F5 刷新再点「提取直链」';
+    } else if (errno === -9 || errno === 105) {
+      msg += '｜提取码错误或未通过：确认链接里的 ?pwd= 是否正确';
+    }
+    return { ok: false, message: msg };
   }
+
 
   // ============ 夸克 / UC ============
 
@@ -549,9 +596,9 @@
   // ============ 对外 ============
 
   window.__DLINK__ = {
-    resolve: async (platformId, shareUrl, maxLinks) => {
+    resolve: async (platformId, shareUrl, maxLinks, opts) => {
       try {
-        if (platformId === 'baidu') return await baiduResolve(shareUrl, maxLinks);
+        if (platformId === 'baidu') return await baiduResolve(shareUrl, maxLinks, opts);
         if (platformId === 'quark' || platformId === 'uc') {
           return await quarkResolve(shareUrl, platformId, maxLinks);
         }

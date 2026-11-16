@@ -18,6 +18,25 @@ import { initIntercept, handleInterceptMessage } from './intercept.js';
 
 // ---------------- 注入解析 ----------------
 
+/** 解析前先拿一些「页面 JS 读不到」的辅助参数。
+ *
+ * 目前只有百度：分享直下需要 sekey（提取码验证通过后的凭证），而它可能
+ * 只存在于 HttpOnly 的 BDCLND cookie 里。页面侧读不到时，就由这里补一个
+ * 候选交给解析器 —— 解析器遇到 errno=-20 会换来源重试。
+ */
+async function resolveOptions(platformId) {
+  const opts = {};
+  if (platformId === 'baidu') {
+    try {
+      const c = await chrome.cookies.get({
+        url: 'https://pan.baidu.com', name: 'BDCLND',
+      });
+      if (c && c.value) opts.sekey = c.value;
+    } catch { /* 没权限就算了，页面侧还有别的来源 */ }
+  }
+  return opts;
+}
+
 async function injectAndResolve(tabId, platformId, shareUrl) {
   // 先注入脚本（world: MAIN 才能在页面上下文执行）
   await chrome.scripting.executeScript({
@@ -27,11 +46,12 @@ async function injectAndResolve(tabId, platformId, shareUrl) {
   });
 
   // 再调用
+  const opts = await resolveOptions(platformId);
   const results = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    args: [platformId, shareUrl],
-    func: (pid, url) => window.__DLINK__ && window.__DLINK__.resolve(pid, url),
+    args: [platformId, shareUrl, opts],
+    func: (pid, url, o) => window.__DLINK__ && window.__DLINK__.resolve(pid, url, undefined, o),
   });
   const res = results && results[0] && results[0].result;
   if (!res) throw new Error('页面没有返回结果（脚本可能被 CSP 拦截）');

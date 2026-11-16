@@ -17,7 +17,7 @@
   //   以前写的是 `if (window.__DLINK__) return;` —— 扩展更新后重新注入时，
   //   页面里的旧对象还活着，新代码直接被挡掉，用户必须手动 F5 才能生效，
   //   表现就是「明明更新了扩展，功能还是旧的」。
-  const BUILD = '0.3.1';
+  const BUILD = '0.3.2';
   if (window.__DLINK__ && window.__DLINK__.build === BUILD) return;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -810,6 +810,27 @@
 
   // ============ 微云 ============
 
+  /** 从页面自己发过的请求里捞 g_tk。
+   *
+   * 为什么需要：微信登录微云时**没有 skey cookie**（只有 weiyun_wx_openid /
+   * wyctoken 等），hash33 算不出 g_tk，只能发 0 → 接口 403 空 body。
+   * 但页面自身渲染时必发过 `share.weiyun.com/webapp/json/...?g_tk=NNN`，
+   * 这些 URL 在 Resource Timing 里可读 —— 直接借用那个值。
+   * （实测：能取到 732187767 / 885207716 这类真实值。）
+   */
+  function weiyunGtkFromPerf() {
+    try {
+      const urls = performance.getEntriesByType('resource').map((e) => e.name);
+      for (let i = urls.length - 1; i >= 0; i--) {
+        const u = urls[i];
+        if (!u || !u.includes('/webapp/json/')) continue;
+        const m = u.match(/g_tk=(\d+)/);
+        if (m && m[1] !== '0') return Number(m[1]);
+      }
+    } catch (e) { /* 拿不到就算了 */ }
+    return 0;
+  }
+
   /** QQ 系 g_tk：hash33(skey)。空 skey 返回 0（游客）。 */
   function weiyunCalcGtk(skey) {
     if (!skey) return 0;
@@ -852,7 +873,8 @@
     // 取 g_tk：优先用 background 从 chrome.cookies 读到的 skey（含 HttpOnly），
     // 页面 document.cookie 里的 skey 大多读不到，只能是兜底。
     const pageSkey = (String(document.cookie || '').match(/(?:^|;\s*)skey=([^;]+)/) || [])[1] || '';
-    const gtk = weiyunCalcGtk((opts && opts.skey) || pageSkey);
+    // 优先级：扩展给的 skey → 页面 cookie 的 skey → 页面请求 URL 里的 g_tk
+    const gtk = weiyunCalcGtk((opts && opts.skey) || pageSkey) || weiyunGtkFromPerf();
     const out = [];
     for (const f of files) {
       const link = await weiyunDlink(key, gtk, f, opts);
@@ -908,7 +930,8 @@
         ok: false,
         message: `微云接口返回非 JSON（HTTP ${r.status}`
           + `${raw ? '' : '，空响应'}）——多半是 g_tk 与 skey 不匹配，或缺 Accept 头`
-          + `${(opts && opts.cookieNames) ? `；已读到 ${opts.cookieNames} 个 cookie` : '；没读到任何 cookie'}`,
+          + `${(opts && opts.cookieNames) ? `；已读到 ${opts.cookieNames} 个 cookie` : '；没读到任何 cookie'}`
+          + `；g_tk=${gtk}`,
       };
     }
     const rc = j.data && j.data.rsp_header && j.data.rsp_header.retcode;

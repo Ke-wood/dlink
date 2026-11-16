@@ -152,6 +152,14 @@ def check_versions(man: dict) -> None:
     if re.search(r'^VERSION\s*=\s*"', srv, re.M):
         fail("server.py 的 VERSION 是硬编码字符串，应改为 VERSION = __version__")
 
+    # injected.js 的 BUILD 决定「页面里的旧对象要不要被新注入替换」，
+    # 与 manifest 不同步会出现「更新了扩展但功能还是旧的」。
+    inj = (EXT / "injected.js").read_text(encoding="utf-8")
+    m = re.search(r"const BUILD = '([^']+)'", inj)
+    v_build = m.group(1) if m else ""
+    if v_build != v_manifest:
+        fail(f"injected.js 的 BUILD={v_build} 与 manifest={v_manifest} 不一致")
+
 
 def check_js_syntax(verbose: bool) -> None:
     node = shutil.which("node")

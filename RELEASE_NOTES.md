@@ -59,4 +59,14 @@ Windows 10/11 64 位。扩展支持 Edge / Chrome。
 
 ---
 
-**校验**：`DLink.exe` 的 SHA256 见下方附件说明。
+---
+
+**校验**
+
+```
+DLink.exe
+  SHA256: 74df9d80a213fd5d5477be232d638a288a0162e5a08f3c2748e1d70c35ef0a5e
+  大小:   57,147,872 bytes（57.1 MB）
+```
+
+Windows 上可用 `certutil -hashfile DLink.exe SHA256` 核对。

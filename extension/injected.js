@@ -42,9 +42,14 @@
     if (!surl) return { ok: false, code: 'BAD_URL', message: '无法解析分享 ID' };
 
     // --- 1. 分享上下文 ---
-    const ctx = await baiduShareContext(surl);
+    // 首选 share/wxlist：它返回**服务端认可的 seckey**。页面变量可能缺失或过期，
+    // 那正是 errno=-20 的根因（见 baiduShareContextFromApi 注释）。
+    const pwd = (new URL(shareUrl)).searchParams.get('pwd') || '';
+    let ctx = await baiduShareContextFromApi(surl, pwd);
+    if (!ctx.ok) ctx = await baiduShareContext(surl);   // 兜底：页面里的 yunData
     if (!ctx.ok) return ctx;
     const { shareid, uk } = ctx;
+    const seckey = ctx.seckey || '';
 
     // --- 2. 列文件（递归） ---
     const files = [];
@@ -52,13 +57,16 @@
     const dirQueue = [];
     const collected = [];   // 收集所有条目，最后统一分类
 
-    const walkItems = (items) => {
-      for (const it of items || []) collected.push(it);
+    // ★ 必须记住每个文件所在的父目录：分享是「文件夹」时，取直链要把它
+    //   放进 path_list。少了这个参数，百度会把请求判成 -20「验证码输入错误」
+    //   （它把「参数对不上」也报成验证码问题，非常误导）。
+    const walkItems = (items, parent) => {
+      for (const it of items || []) collected.push({ it, parent: parent || '' });
     };
 
-    walkItems(ctx.rootFiles);
+    walkItems(ctx.rootFiles, '');
     for (const it of ctx.rootFiles || []) {
-      if (it.isdir && it.path) dirQueue.push(it.path);
+      if (Number(it.isdir) === 1 && it.path) dirQueue.push(it.path);
     }
 
     let guard = 0;
@@ -67,20 +75,22 @@
       if (seen.has(dir)) continue;
       seen.add(dir);
       const items = await baiduList(surl, shareid, uk, dir);
-      walkItems(items);
+      walkItems(items, dir);          // 这一层的父目录就是 dir
       for (const it of items) {
-        if (it.isdir && it.path && !seen.has(it.path)) dirQueue.push(it.path);
+        if (Number(it.isdir) === 1 && it.path && !seen.has(it.path)) dirQueue.push(it.path);
       }
     }
 
-    for (const it of collected) {
-      if (it.isdir) continue;
+    for (const { it, parent } of collected) {
+      if (Number(it.isdir) === 1) continue;
+      const name = it.server_filename;
       files.push({
         fid: String(it.fs_id),
-        name: it.server_filename,
+        name,
         size: Number(it.size || 0),
         md5: (it.md5 || '').toLowerCase(),
-        path: it.path,
+        path: it.path || `${parent}/${name}`,
+        parent,                        // '' = 根目录
         shareid,
         uk,
       });
@@ -94,7 +104,7 @@
       ? maxLinks : files.length;
     const out = [];
     for (const f of files.slice(0, limit)) {
-      const link = await baiduDlink(surl, f, opts && opts.sekey);
+      const link = await baiduDlink(surl, f, seckey || (opts && opts.sekey));
       if (link.ok) out.push(link.item);
       else out.push({ ...f, error: link.message });
     }
@@ -171,8 +181,8 @@
       if (s && !out.includes(s)) out.push(s);
     };
     try {
-      push(window.currentSekey);                       // 页面变量：最准，但可能过期
-      push(sekeyHint);                                 // background 读的 BDCLND（含 HttpOnly）
+      push(sekeyHint);                                 // share/wxlist 下发，或 BDCLND：最可信
+      push(window.currentSekey);                       // 页面变量：可能是旧分享的残留
       push(window.yunData && window.yunData.sekey);
       const m = String(document.cookie || '').match(/(?:^|;\s*)BDCLND=([^;]+)/);
       if (m && m[1]) push(decodeURIComponent(m[1]));   // 页面能读到的 BDCLND
@@ -181,19 +191,23 @@
   }
 
   /** 发一次 sharedownload；网络异常也归成业务错误，交给上层换 sekey 重试 */
-  async function sharedownloadOnce(surl, f, sekey, jsToken, sign, timestamp) {
+  async function sharedownloadOnce(surl, f, sekey, jsToken, sign, timestamp, pathList) {
     const body = new URLSearchParams({
       encrypt: '0', product: 'share',
       uk: String(f.uk), primaryid: String(f.shareid),
-      fid_list: JSON.stringify([f.fid]), path_list: '',
+      fid_list: JSON.stringify([f.fid]),
+      // 根目录文件传空串；子目录文件必须传父目录的 JSON 数组
+      path_list: pathList || '',
       extra: JSON.stringify({ sekey }),
+      type: 'nolimit',          // 对齐 AList 的可用写法
     });
     if (jsToken) body.set('jsToken', jsToken);
+    if (pathList) body.set('path_list', pathList);
     try {
       const r = await fetch(
         'https://pan.baidu.com/api/sharedownload?' + new URLSearchParams({
           sign, timestamp: String(timestamp), channel: 'chunlei',
-          web: '1', app_id: '250528', clienttype: '0', bdstoken: '',
+          web: '1', app_id: '250528', clienttype: '12', bdstoken: '',
         }),
         {
           method: 'POST', credentials: 'include',
@@ -203,6 +217,49 @@
       return await r.json();
     } catch (e) {
       return { errno: -1, show_msg: `请求失败：${e && e.message ? e.message : e}` };
+    }
+  }
+
+  /** 从分享接口拿「服务端认可的」上下文：seckey / shareid / uk / 根路径。
+   *
+   * 为什么不用页面变量（实测 2026-11-16，PC.7z 那个分享）：
+   *   · 页面里可能根本没有 `window.currentSekey`；
+   *   · 同标签页 SPA 切过别的分享时它还留着旧值。
+   * 两种情况下 `/api/sharedownload` 一律返回 errno=-20「验证码输入错误」。
+   *
+   * `share/wxlist` 是微信端在用的接口：带 pwd 就能拿到**当前有效的 seckey**
+   * （匿名可列目录；取直链仍需要登录，匿名会返回 errno=9019 need verify）。
+   * 这个来源是 AList 百度分享驱动的做法，属于事实上的标准。
+   */
+  async function baiduShareContextFromApi(surl, pwd) {
+    const body = new URLSearchParams({ shorturl: surl, root: '1' });
+    if (pwd) body.set('pwd', pwd);
+    try {
+      const r = await fetch(
+        'https://pan.baidu.com/share/wxlist?channel=weixin&version=2.2.2&clienttype=25&web=1',
+        {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: body.toString(),
+        });
+      const j = await r.json();
+      if (j.errno !== 0 || !j.data) {
+        return { ok: false, errno: j.errno, message: `wxlist errno=${j.errno}` };
+      }
+      const d = j.data;
+      const first = (d.list || [])[0] || {};
+      return {
+        ok: true,
+        seckey: d.seckey || '',
+        shareid: d.shareid,
+        uk: d.uk,
+        rootFiles: d.list || [],
+        // 分享根的绝对路径（/Game 这类），子目录列目录时会用到
+        rootPath: first.path ? String(first.path).replace(/\/[^/]+$/, '') : '',
+        source: 'wxlist',
+      };
+    } catch (e) {
+      return { ok: false, message: `wxlist 请求失败：${e && e.message ? e.message : e}` };
     }
   }
 
@@ -220,39 +277,56 @@
     const { sign, timestamp } = cfg.data || {};
     const jsToken = window.jsToken || '';
 
-    // 逐个候选试；-20 才换源（其它错误换也没用，白白多打一次接口）
+    // 两个维度都要试：
+    //   sekey  —— 页面变量可能缺失，或残留上一个分享的值
+    //   path_list —— 子目录里的文件不带父目录会被判成 -20
     const candidates = baiduSekeyCandidates(sekeyHint);
     const tried = candidates.length ? candidates : [''];
+    const dir = f.parent || '';
+    const pathVariants = dir
+      ? [JSON.stringify([dir]), '']   // 先按父目录，再退回根目录写法
+      : [''];
+
+    const RETRY_ERRNOS = new Set([-20, -9, -6, 105]);
     let dl = null;
+    let attempts = 0;
+    let lastSekey = '';
     for (const sekey of tried) {
-      dl = await sharedownloadOnce(surl, f, sekey, jsToken, sign, timestamp);
-      if (dl.errno === 0 && dl.list && dl.list[0] && dl.list[0].dlink) {
-        const it = dl.list[0];
-        return {
-          ok: true,
-          item: {
-            url: it.dlink,
-            name: f.name,
-            size: Number(it.size || f.size || 0),
-            md5: (it.md5 || f.md5 || '').toLowerCase(),
-            // 直链必须带 BDUSS 系 cookie，否则 403 error_code:31045
-            cookies: await pickCookies('baidu'),
-            headers: { Referer: 'https://pan.baidu.com/' },
-            expires_at: expiresAtFor('baidu'),
-            refresh: { platform: 'baidu', shareUrl: surl, fid: f.fid },
-          },
-        };
+      lastSekey = sekey;
+      for (const pathList of pathVariants) {
+        attempts++;
+        dl = await sharedownloadOnce(surl, f, sekey, jsToken, sign, timestamp, pathList);
+        if (dl.errno === 0 && dl.list && dl.list[0] && dl.list[0].dlink) {
+          const it = dl.list[0];
+          return {
+            ok: true,
+            item: {
+              url: it.dlink,
+              name: f.name,
+              size: Number(it.size || f.size || 0),
+              md5: (it.md5 || f.md5 || '').toLowerCase(),
+              // 直链必须带 BDUSS 系 cookie，否则 403 error_code:31045
+              cookies: await pickCookies('baidu'),
+              headers: { Referer: 'https://pan.baidu.com/' },
+              expires_at: expiresAtFor('baidu'),
+              refresh: { platform: 'baidu', shareUrl: surl, fid: f.fid },
+            },
+          };
+        }
+        if (!RETRY_ERRNOS.has(Number(dl.errno))) break;
+        if (attempts >= 6) break;
       }
-      if (Number(dl.errno) !== -20) break;
     }
 
     const errno = Number(dl && dl.errno);
     let msg = `sharedownload errno=${dl && dl.errno} ${(dl && dl.show_msg) || ''}`.trim();
     if (errno === -20) {
-      // 百度把「验证状态对不上」也报成「验证码输入错误」，必须给出可操作的下一步
-      msg += candidates.length
-        ? `｜试过 ${tried.length} 个 sekey 来源都被拒：在分享页重新输入提取码（或过掉图形验证码），按 F5 刷新页面后再点「提取直链」`
-        : '｜页面里没拿到 sekey（提取码还没通过）：先在分享页输入提取码、看到文件列表后按 F5 刷新再点「提取直链」';
+      // 百度把「验证状态对不上」和「参数对不上」都报成「验证码输入错误」
+      msg += `｜试了 ${attempts} 次（${tried.length} 个 sekey 来源`
+        + `${dir ? ' × 2 种路径参数' : ''}）都被拒`;
+      msg += dir ? `；文件在子目录「${dir}」里` : '';
+      msg += '。可试：分享页重输提取码/过掉图形验证码后 F5 再点；'
+        + '仍失败则这个分享可能只允许转存或客户端下载';
     } else if (errno === -9 || errno === 105) {
       msg += '｜提取码错误或未通过：确认链接里的 ?pwd= 是否正确';
     }

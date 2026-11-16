@@ -152,3 +152,84 @@
 
 **工作方式**：需要下载时喊我，我按真实登录态现场取链、现场试，
 不通就如实说明卡在哪一层（平台限制 vs 我们的 bug），不硬编「万能解析」。
+
+---
+
+## 六、微云「自己空间下载」的完整链路（2026-11-16 打通，最有用的一条）
+
+> 分享页对超限文件关死了直链，但**自己空间**没这个限制。
+> 下面这套实测能让 1.3GB 文件以 2MB/s、8 路稳定下完。
+
+### 6.1 两个接口不是一回事
+
+| 场景 | 接口 | 结果 |
+|---|---|---|
+| 分享页直下 | `weiyunShare/WeiyunShareBatchDownload`（cmd 12024） | 超限文件一律 `24203 服务器繁忙` |
+| 自己空间直下 | `weiyunQdiskClient/DiskFileBatchDownload`（cmd **2402**） | `retcode 0`，返回可用下载信息 |
+
+请求体要点（自己空间那套）：
+
+```json
+{"req_header":"<JSON字符串：seq/type=1/cmd=2402/appid=30151/version=3.3.3.3/wx_openid/user_flag=1/env_id>",
+ "req_body":"<JSON字符串：ReqMsg_body.ext_req_head + '.weiyun.DiskFileBatchDownloadMsgReq_body'，
+             内含 file_list:[{file_id, pdir_key, filename, file_size}]>"}
+```
+
+响应里每个文件给三样东西：`encode_url`、`server_name`、`cookie_name/cookie_value`。
+**`cookie_value` 每个文件不同** —— 拿 A 文件的 FTN5K 去下 B 文件会 403。
+
+### 6.2 下载 URL 的真实形状
+
+```
+https://<server_name>/ftn_handler/<encode_url>/<文件名>?fname=<文件名>&from=30151&version=3.3.3.3
+Cookie: FTN5K=<cookie_value>
+```
+
+少任何一段都是 `500` 或 `403`：
+
+| 少了什么 | 现象 |
+|---|---|
+| `/文件名?fname=…&from=…&version=…` | `500` 空 body |
+| 正确的 `FTN5K` | `403` |
+| Range 头 | 能下但拿不到断点续传 |
+
+### 6.3 怎么从页面拿到 encode_url
+
+页面把真实下载地址上报到了统计接口，**decode 那个 URL 就能读到**：
+
+```js
+performance.getEntriesByType('resource').map(e => e.name)
+  .filter(n => n.includes('trace.qq.com') && n.includes('weiyun_web_report_download'))
+  .map(u => decodeURIComponent(u.match(/[?&]content=([^&]+)/)[1]))
+  .map(s => JSON.parse(s)?.log?.[0]?.content?.[0]?.dimensions || [])
+```
+
+经验：**用过的 encode_url 不会失效**（可在浏览器下载的同时给 Python 用）。
+
+### 6.4 Python 直连 API 会 403，但 CDN 不会
+
+| 目标 | Python requests | 说明 |
+|---|---|---|
+| `www.weiyun.com/webapp/json/...` | ❌ 403 空 body | requests 的 TLS/HTTP 指纹和 Chrome 不同，被网关拦 |
+| `gzi-download.weiyun.com/ftn_handler/...` | ✅ 200/206 | CDN 只看 FTN5K，不看指纹 |
+
+**所以正确姿势是「浏览器取链 → Python 多线程下载」**，
+而不是「Python 全自动」。这也解释了为什么抓包工具能看、脚本却调不通。
+
+### 6.5 微信登录没有 skey
+
+`g_tk` 由 `skey` 算，但微信登录的微云账号**根本没有 skey**（只有
+`weiyun_wx_openid` / `weiyun_wx_access_token` / `wyctoken`），
+hash33 那九个值都试过，全都对不上页面真实 `g_tk`（它是服务端会话态）。
+
+**结论**：微云的 `g_tk` 只能从页面请求里借，不要试图算。
+
+### 6.6 实测速度
+
+| 文件 | 大小 | 8 路速度 | 耗时 |
+|---|---|---|---|
+| LustFriend/PC.7z | 417 MB | 2.0 MB/s | 约 3.5 分钟 |
+| 不可思议之国的淫魔/PC.7z | 619 MB | 2.0 MB/s（后半 0.7） | 约 5 分钟 |
+| 别被诱惑所迷/PC.7z | 1.3 GB | 2.0 MB/s | 约 13 分钟 |
+
+工具：`scripts/dl_url.py`（按 URL 分段并行，支持断点续传）。

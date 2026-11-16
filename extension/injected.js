@@ -17,7 +17,7 @@
   //   以前写的是 `if (window.__DLINK__) return;` —— 扩展更新后重新注入时，
   //   页面里的旧对象还活着，新代码直接被挡掉，用户必须手动 F5 才能生效，
   //   表现就是「明明更新了扩展，功能还是旧的」。
-  const BUILD = '0.2.9';
+  const BUILD = '0.3.0';
   if (window.__DLINK__ && window.__DLINK__.build === BUILD) return;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -810,7 +810,15 @@
 
   // ============ 微云 ============
 
-  async function weiyunResolve(shareUrl) {
+  /** QQ 系 g_tk：hash33(skey)。空 skey 返回 0（游客）。 */
+  function weiyunCalcGtk(skey) {
+    if (!skey) return 0;
+    let h = 5381;
+    for (const ch of String(skey)) h = (h * 33 + ch.charCodeAt(0)) & 0x7fffffff;
+    return h;
+  }
+
+  async function weiyunResolve(shareUrl, opts) {
     const key = shareUrl.split('/').pop().split('?')[0];
     const app = document.getElementById('app');
     const store = app && app.__vue__ && app.__vue__.$store;
@@ -837,11 +845,14 @@
     if (inst && inst.pathStack) walk(inst.pathStack[inst.pathStack.length - 1]);
 
     if (!files.length) {
-      return { ok: false, code: 'EMPTY', message: '没找到文件（可能还在加载）' };
+      return { ok: false, code: 'EMPTY',
+        message: '没找到文件：分享根如果是文件夹，需要先在页面里点进去再取直链' };
     }
 
-    // 取 g_tk：从 cookie skey 算
-    const gtk = await pickGtk('weiyun');
+    // 取 g_tk：优先用 background 从 chrome.cookies 读到的 skey（含 HttpOnly），
+    // 页面 document.cookie 里的 skey 大多读不到，只能是兜底。
+    const pageSkey = (String(document.cookie || '').match(/(?:^|;\s*)skey=([^;]+)/) || [])[1] || '';
+    const gtk = weiyunCalcGtk((opts && opts.skey) || pageSkey);
     const out = [];
     for (const f of files) {
       const link = await weiyunDlink(key, gtk, f);
@@ -956,7 +967,7 @@
         if (platformId === 'quark' || platformId === 'uc') {
           return await quarkResolve(shareUrl, platformId, maxLinks);
         }
-        if (platformId === 'weiyun') return await weiyunResolve(shareUrl);
+        if (platformId === 'weiyun') return await weiyunResolve(shareUrl, opts);
         return { ok: false, code: 'NO_PLATFORM', message: `不支持的平台: ${platformId}` };
       } catch (e) {
         return { ok: false, code: 'EXCEPTION', message: String(e) };

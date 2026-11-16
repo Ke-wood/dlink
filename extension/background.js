@@ -34,6 +34,19 @@ async function resolveOptions(platformId) {
       if (c && c.value) opts.sekey = c.value;
     } catch { /* 没权限就算了，页面侧还有别的来源 */ }
   }
+  // 微云：g_tk 由 skey 算，而 skey 是 HttpOnly —— 页面 JS 读不到，
+  // 只有扩展能用 chrome.cookies 取。拿不到 skey 就只能发 g_tk=0（被当游客，
+  // 大文件下载一律 403）。
+  if (platformId === 'weiyun') {
+    for (const url of ['https://share.weiyun.com', 'https://www.weiyun.com']) {
+      try {
+        const list = await chrome.cookies.getAll({ url });
+        const pick = list.find((c) => c.name === 'skey')
+          || list.find((c) => c.name === 'p_skey');
+        if (pick && pick.value) { opts.skey = pick.value; break; }
+      } catch { /* ignore */ }
+    }
+  }
   return opts;
 }
 

@@ -24,6 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from dlink.models import DirectLink  # noqa: E402
+from dlink import __version__  # noqa: E402
 from dlink.host_learn import effective_workers as learn_workers  # noqa: E402
 from dlink.host_learn import all_hosts, forget as forget_host, record as record_host  # noqa: E402
 from dlink.profile import all_profiles, get_profile, reset_profile, save_profile  # noqa: E402
@@ -33,7 +34,9 @@ from dlink.settings_store import load_settings, save_settings  # noqa: E402
 from dlink.task_queue import FAILED, NEED_REFRESH, QUEUED, Queue, Task  # noqa: E402
 
 PORT_RANGE = (8765, 8766, 8767, 8768, 8769)
-VERSION = "0.1.0"
+# 从包版本取，不硬编码 —— 曾经写死 "0.1.0"，导致 /api/health 永远报旧版本，
+# 发布后无法确认用户装的到底是哪一版（scripts/check_extension.py 会检查这个）
+VERSION = __version__
 DEFAULT_MAX_CONCURRENT = 3
 
 # 保存目录等全局设置（可由 GUI 修改）
@@ -85,6 +88,31 @@ def task_to_link(task: Task) -> DirectLink:
 _DEST_LOCK = threading.Lock()
 _RESERVED_DESTS: set[str] = set()
 
+# Windows 保留设备名，做文件名会直接创建失败
+_RESERVED_STEMS = ({"con", "prn", "aux", "nul"}
+                   | {f"com{i}" for i in range(1, 10)}
+                   | {f"lpt{i}" for i in range(1, 10)})
+
+
+def safe_basename(name: str) -> str:
+    """把任意来源的文件名收敛成一个安全的**文件名**（不含任何目录）。
+
+    ⚠️ 为什么必须做：接管浏览器下载时，扩展拿到的 `item.filename` 是
+    浏览器给的**完整本地路径**（如 `C:\\Users\\x\\Downloads\\a.zip`）。
+    `Path(save_dir) / "C:/Users/x/Downloads/a.zip"` 在 Windows 上会把
+    整个 save_dir 替换掉 —— 文件被写到下载目录之外。另外浏览器文件名
+    里可能带 `..`、`<>:"|?*`，同样要清掉。
+    """
+    s = str(name or "").replace("\\", "/").split("/")[-1]
+    s = "".join(ch for ch in s if ch not in '<>:"|?*' and ord(ch) >= 32)
+    s = s.rstrip(". ")
+    if not s:
+        return "download.bin"
+    stem = s.partition(".")[0]
+    if stem.lower() in _RESERVED_STEMS:
+        s = "_" + s
+    return s[:180]
+
 
 def unique_dest(save_dir: Path, name: str) -> Path:
     """分配一个未被占用的目标路径。
@@ -95,6 +123,7 @@ def unique_dest(save_dir: Path, name: str) -> Path:
     （实测：29,701,389 字节的文件合成了 29,832,461，多 131,072）。
     """
     with _DEST_LOCK:
+        name = safe_basename(name)
         stem, suf = os.path.splitext(name)
         dest = save_dir / name
         i = 1
@@ -239,8 +268,23 @@ class Handler(BaseHTTPRequestHandler):
     server_version = f"DLink/{VERSION}"
 
     def log_message(self, fmt, *args):
-        if self.path.split("?")[0] != "/api/health":
-            sys.stderr.write(f"[{time.strftime('%H:%M:%S')}] {fmt % args}\n")
+        """请求日志。
+
+        ⚠️ 必须防 sys.stderr 为 None：打包成 exe（console=False）后，
+        windowed 进程里 sys.stderr 是 None。直接 `.write()` 会抛
+        AttributeError，而 BaseHTTPRequestHandler 是在**每个请求的线程**
+        里调 log_message 的 —— 异常会把线程带走，客户端看到的是
+        「连接被重置且没有任何响应」。实测：exe 里所有 POST 全挂，
+        而 GET /api/health 因为跳过日志所以看起来一切正常，极难排查。
+        """
+        if self.path.split("?")[0] == "/api/health":
+            return
+        try:
+            stream = sys.stderr
+            if stream is not None:
+                stream.write(f"[{time.strftime('%H:%M:%S')}] {fmt % args}\n")
+        except Exception:
+            pass
 
     def _cors(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -349,7 +393,9 @@ class Handler(BaseHTTPRequestHandler):
 
         for idx, item in enumerate(items):
             tid = f"{int(time.time() * 1000)}-{idx}"
-            name = item.get("filename") or item.get("name") or "(未知)"
+            # 接管浏览器下载时 filename 是完整本地路径，列表里不能显示整条路径
+            raw_name = item.get("filename") or item.get("name") or ""
+            name = safe_basename(raw_name) if raw_name else "(未知)"
 
             # 没有 url 的条目（取链失败/超单次上限）也落成失败任务，
             # 否则用户以为文件丢了（设计文档矛盾 3）

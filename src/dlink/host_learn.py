@@ -168,8 +168,18 @@ def forget_all() -> Path:
 
 
 def effective_workers(url: str, platform_default: int) -> tuple[int, str]:
-    """综合平台默认与主机学习，给出最终并发数 + 来源说明。"""
+    """综合平台默认与主机学习，给出最终并发数 + 来源说明。
+
+    ⚠️ 学习值**只能往下走，不能突破平台上限**。
+    否则一个在普通链接上学到的 8 路，会把百度的 1 路上限顶掉 ——
+    百度是账号级限速，实测 8 路掉到 9 KB/s（1 路 75、3 路 130）。
+    这个上限必须由平台策略说了算，学习值只是"比默认更保守"的补充。
+    """
+    base = max(MIN_WORKERS, int(platform_default))
     learned = learned_workers(url)
-    if learned is not None:
-        return learned, f"按主机学习值（{host_of(url)}）"
-    return platform_default, "平台默认"
+    if learned is None:
+        return base, "平台默认"
+    if learned > base:
+        return base, (f"平台上限 {base} 路"
+                      f"（主机学到 {learned} 路，已按平台策略封顶）")
+    return learned, f"按主机学习值（{host_of(url)}）"

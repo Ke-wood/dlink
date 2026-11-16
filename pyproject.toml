@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dlink"
-version = "0.1.0"
+version = "0.2.0"
 description = "网盘分享链接 → 直链 → 多线程下载（浏览器扩展取链 + 桌面下载器）"
 readme = "README.md"
 requires-python = ">=3.10"

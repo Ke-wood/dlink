@@ -25,6 +25,26 @@ python -m PyInstaller DLink.spec --noconfirm --clean
 
 如果要更快启动，改成目录模式：把 `EXE(...)` 拆成 `EXE` + `COLLECT`，产物是文件夹。本项目选单文件是因为分发便利性更重要。
 
+### ⚠️ `console=False` 的陷阱：`sys.stderr` 是 `None`
+
+windowed 进程里没有控制台，`sys.stderr`（以及 `sys.stdout`）是 `None`。
+任何 `sys.stderr.write(...)` 都会抛 `AttributeError` —— 而
+`http.server.BaseHTTPRequestHandler` 是**每个请求开一个线程**调 `log_message()` 的，
+异常直接把线程带走，客户端看到的是「连接被重置且没有任何响应」。
+
+实测症状：**exe 里所有 POST 全挂**（扩展发任务 → 失败；GUI 改设置 → 失败），
+而 `GET /api/health` 因为代码里跳过日志所以一切正常 —— 极易误判成「后端没问题」。
+
+所以：
+- 日志写入一律 `if stream is not None` 保护（见 `server.py` 的 `log_message`）
+- 打包后必须跑 `python scripts/smoke_exe.py`（真起后端 + 真下文件 + 校验字节数）
+
+### ⚠️ 浏览器给的 `filename` 是完整路径
+
+`chrome.downloads` 的 `item.filename` 是 `C:\Users\x\Downloads\a.zip`。
+`Path(save_dir) / 该字符串` 在 Windows 上会把 `save_dir` 整个替换掉，
+文件写到下载目录之外。`server.safe_basename()` 统一收敛，并有回归测试。
+
 ---
 
 ## 发布 Release

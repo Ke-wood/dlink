@@ -194,3 +194,48 @@ GET <rt=sh 直链> + Referer: https://pan.baidu.com/   （不带任何 cookie）
 ```
 
 - 用户在 GUI 里可以查看/修改/清空这个记忆
+
+---
+
+## 8. 平台路线图（**均未接入，未验证**）
+
+> 下面的是候选，不是承诺。可行性基于公开信息推断，接入前必须实测 ——
+> 网盘接口变化很快，任何没有实测记录的平台都不要写进 README 的支持表。
+
+### 第一梯队（API 相对清晰，值得先做）
+
+| 平台 | 域名 | 预判难点 |
+|---|---|---|
+| **阿里云盘** | `alipan.com` / `aliyundrive.com` | 前端 API 较完整；分享需 `share_id` + `share_token`；直链由 `getDownloadUrl` 返回，带 `x-oss-` 签名 |
+| **123 云盘** | `123pan.com` / `123684.com` | 小站但 API 简单；分享直链需 `passCode`；有频率限制 |
+| **天翼云盘** | `cloud.189.cn` | 需登录态；分享走 `shareId`；有 `familyId` 概念 |
+| **蓝奏云** | `lanzou*.com`（域名常换） | 直链藏在页面 JS，**UA 极敏感**，域名轮换频繁，维护成本高 |
+
+### 第二梯队（需要较多逆向）
+
+| 平台 | 域名 | 预判难点 |
+|---|---|---|
+| 移动云盘 | `yun.139.com` | 接口字段复杂，需抓包 |
+| 迅雷云盘 | `pan.xunlei.com` | 强风控，可能需要设备指纹 |
+| 115 网盘 | `115.com` | 有开放平台但需申请；网页端接口加密较重 |
+| 坚果云 | `jianguoyun.com` | 支持 WebDAV（最省事，但需用户填账号） |
+
+### 不建议做
+
+| 平台 | 原因 |
+|---|---|
+| 城通网盘 `545c.com` | 广告跳转严重，直链极不稳定 |
+| 奶牛快传 / 文叔叔 | 临时分享型，时效短、接口已多次变更 |
+| 各类「云盘聚合站」 | 本身是二次封装，接它们不如接源头 |
+
+### 接入一个新平台的完整清单
+
+1. `src/dlink/platforms/<name>.py` —— 实现平台接口
+2. `src/dlink/profile.py` 的 `BUILTIN` 加默认策略 + 说明文案
+3. `extension/injected.js` 加 `resolveXxx()` + 注册表一行
+4. `extension/platforms.js` 加分享页域名识别 + **CDN 域名映射**
+   （漏了这一步，接管下载时会按 `direct` 跑 8 路，百度那类账号级限速会直接塌）
+5. `extension/manifest.json` 加 `host_permissions` 与 `content_scripts.matches`
+6. `docs/PLATFORMS.md` 补实测数据（本文件）
+7. `README.md` 平台表加一行
+8. `tests/test_platform_<name>.py`

@@ -11,57 +11,10 @@
  */
 
 import { detectPlatform, parseShareId } from './platforms.js';
+import { findDownloader, sendToDownloader } from './downloader.js';
+import { initIntercept, handleInterceptMessage } from './intercept.js';
 
-const DOWNLOADER_PORTS = [8765, 8766, 8767, 8768, 8769];
-let downloaderPort = null;
-
-// ---------------- 与下载器通信 ----------------
-
-async function findDownloader() {
-  if (downloaderPort) {
-    const ok = await ping(downloaderPort);
-    if (ok) return downloaderPort;
-    downloaderPort = null;
-  }
-  for (const p of DOWNLOADER_PORTS) {
-    if (await ping(p)) {
-      downloaderPort = p;
-      return p;
-    }
-  }
-  return null;
-}
-
-async function ping(port) {
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}/api/health`, {
-      signal: AbortSignal.timeout(800),
-    });
-    if (!r.ok) return false;
-    const j = await r.json();
-    return j && j.app === 'dlink';
-  } catch {
-    return false;
-  }
-}
-
-async function sendToDownloader(task) {
-  const port = await findDownloader();
-  if (!port) {
-    throw new Error(
-      '下载器没有运行。请先启动 DLink 下载器（它会监听 127.0.0.1:8765 起的端口）。');
-  }
-  const r = await fetch(`http://127.0.0.1:${port}/api/task`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(task),
-  });
-  if (!r.ok) {
-    const t = await r.text();
-    throw new Error(`下载器返回 ${r.status}: ${t.slice(0, 200)}`);
-  }
-  return r.json();
-}
+// 与下载器的通信见 downloader.js（findDownloader / sendToDownloader）
 
 // ---------------- 注入解析 ----------------
 
@@ -175,7 +128,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const port = await findDownloader();
         sendResponse({ ok: true, data: { port } });
       } else {
-        sendResponse({ ok: false, error: `未知消息类型: ${msg.type}` });
+        const handled = await handleInterceptMessage(msg);
+        if (handled) sendResponse(handled);
+        else sendResponse({ ok: false, error: `未知消息类型: ${msg.type}` });
       }
     } catch (e) {
       sendResponse({
@@ -294,6 +249,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 chrome.runtime.onStartup.addListener(startRefreshPolling);
 chrome.runtime.onInstalled.addListener(startRefreshPolling);
 startRefreshPolling();
+initIntercept();
 
 // 首次安装提示
 chrome.runtime.onInstalled.addListener((details) => {

@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>DLink 设置</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font: 13px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: #dcdcdc; background: #0e0e0e; padding: 28px 24px 48px;
+    }
+    .wrap { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+    header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+    header h1 { font-size: 18px; font-weight: 600; color: #fff; }
+    header .ver { font-size: 11px; color: #6f6f6f; }
+    section { border: 1px solid #2a2a2a; border-radius: 10px; background: #161616; padding: 16px 18px; }
+    section > h2 { font-size: 13px; font-weight: 600; color: #fff; margin-bottom: 12px; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 0; }
+    .row + .row { border-top: 1px solid #222; }
+    .row .label { color: #dcdcdc; }
+    .row .desc { color: #7a7a7a; font-size: 11px; margin-top: 2px; }
+    input[type=text], input[type=number], textarea {
+      font: inherit; color: #eee; background: #0b0b0b; border: 1px solid #333;
+      border-radius: 6px; padding: 7px 9px; width: 100%;
+    }
+    input[type=number] { width: 120px; }
+    textarea { min-height: 84px; resize: vertical; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+    input:focus, textarea:focus { outline: 1px solid #777; }
+    .switch { position: relative; width: 44px; height: 24px; flex: 0 0 auto; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .switch span {
+      position: absolute; inset: 0; background: #333; border-radius: 12px;
+      cursor: pointer; transition: background .15s;
+    }
+    .switch span::after {
+      content: ""; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px;
+      background: #8a8a8a; border-radius: 50%; transition: transform .15s, background .15s;
+    }
+    .switch input:checked + span { background: #fff; }
+    .switch input:checked + span::after { transform: translateX(20px); background: #000; }
+    .radios { display: flex; flex-direction: column; gap: 8px; }
+    .radios label { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
+    .radios input { margin-top: 4px; accent-color: #fff; }
+    .radios b { color: #fff; }
+    button {
+      font: inherit; cursor: pointer; border-radius: 6px; padding: 8px 14px;
+      border: 1px solid #444; background: #1d1d1d; color: #e8e8e8;
+    }
+    button:hover { background: #262626; }
+    button.primary { background: #fff; color: #000; border-color: #fff; font-weight: 600; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .btns { display: flex; flex-wrap: wrap; gap: 8px; }
+    .kv { display: grid; grid-template-columns: 110px 1fr; gap: 6px 12px; font-size: 12px; }
+    .kv .k { color: #7a7a7a; }
+    .kv .v { color: #e0e0e0; word-break: break-all; }
+    .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #666; margin-right: 6px; vertical-align: middle; }
+    .dot.on { background: #fff; }
+    .dot.off { background: #555; }
+    .note { color: #757575; font-size: 11px; line-height: 1.7; }
+    .note b { color: #bdbdbd; font-weight: 600; }
+    code { background: #242424; padding: 1px 5px; border-radius: 3px; color: #ddd; }
+    #toast {
+      position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+      background: #fff; color: #000; padding: 8px 16px; border-radius: 20px;
+      font-size: 12px; font-weight: 600; opacity: 0; pointer-events: none;
+      transition: opacity .2s;
+    }
+    #toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>DLink 设置</h1>
+    <span class="ver" id="ver"></span>
+  </header>
+
+  <section>
+    <h2>接管浏览器下载</h2>
+    <div class="row">
+      <div>
+        <div class="label">启用接管</div>
+        <div class="desc">开启后，符合规则的下载会被取消并转由 DLink 完成；关闭则完全不动浏览器下载。</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="enabled"><span></span></label>
+    </div>
+    <div class="row">
+      <div style="width:100%">
+        <div class="label" style="margin-bottom:8px">接管范围</div>
+        <div class="radios">
+          <label><input type="radio" name="mode" value="netdisk">
+            <span><b>只接管网盘链接</b>（推荐）<br>
+              <span class="desc">百度 / 夸克 / UC / 微云的下载域名；其他文件浏览器照常下载。</span></span></label>
+          <label><input type="radio" name="mode" value="all">
+            <span><b>接管所有下载</b><br>
+              <span class="desc">所有经过浏览器下载栈的 http(s) 链接。注意：这意味着扩展会看到全部下载地址。</span></span></label>
+        </div>
+      </div>
+    </div>
+    <div class="note" style="margin-top:10px">
+      首次开启前，扩展会先弹一次询问窗口；本次「放行」的下载不会被接管。
+    </div>
+  </section>
+
+  <section>
+    <h2>放行规则</h2>
+    <div class="row">
+      <div style="width:100%">
+        <div class="label">永不接管的域名</div>
+        <div class="desc">一行一个，只写域名（如 <code>example.com</code>，子域名同样放行）。</div>
+        <textarea id="domains" placeholder="example.com&#10;intranet.local" spellcheck="false"></textarea>
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <div class="label">最小文件大小</div>
+        <div class="desc">小于该大小的文件不接管；0 表示不限制（大小未知的文件不参与判断）。</div>
+      </div>
+      <div style="display:flex; align-items:center; gap:6px">
+        <input type="number" id="minSize" min="0" step="1">
+        <span class="note">MB</span>
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <div class="label">接管时弹系统通知</div>
+        <div class="desc">关闭后静默接管，只显示扩展图标角标。</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="silent"><span></span></label>
+    </div>
+  </section>
+
+  <section>
+    <h2>DLink 下载器</h2>
+    <div class="kv">
+      <div class="k">连接状态</div><div class="v"><span class="dot" id="dot"></span><span id="dlstate">检测中…</span></div>
+      <div class="k">端口</div><div class="v" id="dlport">—</div>
+      <div class="k">保存目录</div><div class="v" id="savedir">—</div>
+      <div class="k">队列</div><div class="v" id="dlqueue">—</div>
+    </div>
+    <div class="note" style="margin-top:10px">
+      接管功能要求 DLink 正在运行。未运行时下载一律放行给浏览器，不会被拦截。
+    </div>
+  </section>
+
+  <section>
+    <h2>其他</h2>
+    <div class="btns">
+      <button id="btn-skip">放行下一次下载</button>
+      <button id="btn-reset">重新弹一次询问窗口</button>
+      <button id="btn-perm">允许读取所有站点 Cookie（可选）</button>
+    </div>
+    <div class="note" style="margin-top:12px">
+      <b>「放行下一次下载」</b>：只跳过下一个下载，之后恢复接管。<br>
+      <b>「重新弹一次询问窗口」</b>：把「问过了」标记清掉，下次下载网盘文件时会再问。<br>
+      <b>「读取所有站点 Cookie」</b>：默认只有网盘域名的 Cookie 可读。授权后，接管普通站点的下载时
+      能带上登录态，成功率更高；不需要就别开。
+    </div>
+  </section>
+
+  <section>
+    <h2>接管不了的情况</h2>
+    <div class="note">
+      <b>blob: / data:</b> 下载内容只存在于页面内存（现代站点常用这种「先组装再保存」的方式），
+      外部程序拿不到，这类下载会直接放行给浏览器。<br>
+      <b>HLS / DASH（.m3u8、.mpd）</b>：这是分片清单而不是文件，需要专门的下载与合并逻辑，当前不支持。<br>
+      <b>POST 表单下载</b>：取消后无法原样重放，转交会失败并自动回退浏览器下载。
+    </div>
+  </section>
+</div>
+<div id="toast"></div>
+<script type="module" src="options.js"></script>
+</body>
+</html>

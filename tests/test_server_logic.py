@@ -19,7 +19,41 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from dlink.hashing import clean_md5, clean_sha1  # noqa: E402
 from dlink.profile import BUILTIN, DownloadProfile, get_profile  # noqa: E402
-from dlink.server import unique_dest  # noqa: E402
+from dlink.server import safe_basename, unique_dest  # noqa: E402
+
+
+# ---------------- 文件名收敛 ----------------
+# 接管浏览器下载后，filename 来自 chrome.downloads，是**完整本地路径**。
+# 直接拼 save_dir 会把下载目录整个替换掉（Windows 绝对路径的语义），
+# 文件会落到 save_dir 之外，所以必须先收敛成 basename。
+
+@pytest.mark.parametrize("raw,want", [
+    (r"C:\Users\someone\Downloads\movie.mkv", "movie.mkv"),
+    ("/home/someone/Downloads/movie.mkv", "movie.mkv"),
+    ("../../evil.sh", "evil.sh"),
+    ("..\\..\\evil.sh", "evil.sh"),
+    ('a<b>c:"d"|e?f*g.zip', "abcdefg.zip"),
+    ("//./../x.zip", "x.zip"),
+    ("..", "download.bin"),
+    ("   ", "download.bin"),
+    ("", "download.bin"),
+    (None, "download.bin"),
+])
+def test_safe_basename(raw, want):
+    assert safe_basename(raw) == want
+
+
+@pytest.mark.parametrize("raw", ["CON.txt", "con", "LPT1", "nul.log"])
+def test_safe_basename_reserved_device(raw):
+    """Windows 保留设备名会让创建直接失败，必须加前缀。"""
+    assert safe_basename(raw).startswith("_")
+
+
+def test_unique_dest_never_escapes_save_dir(tmp_path):
+    """★ 回归：绝对路径作为文件名时，dest 必须仍在 save_dir 里。"""
+    d = unique_dest(tmp_path, r"C:\Windows\System32\evil.dll")
+    assert d.parent == tmp_path
+    assert d.name == "evil.dll"
 
 
 # ---------------- unique_dest 竞态 ----------------
@@ -120,3 +154,76 @@ def test_bad_sha1_rejected():
     assert clean_sha1("not-a-hash") == ""
     assert clean_sha1("") == ""
     assert clean_sha1(None) == ""
+
+
+# ---------------- 打包成 exe（windowed）后的环境差异 ----------------
+
+def test_log_message_survives_none_stderr(monkeypatch):
+    """★ 回归：exe 是无控制台的 windowed 进程，sys.stderr 为 None。
+
+    过去 log_message 直接 `sys.stderr.write(...)`，会抛 AttributeError。
+    BaseHTTPRequestHandler 是**每个请求一个线程**，异常把线程带走，
+    客户端看到的是「连接被重置且没有任何响应」——而 GET /api/health
+    因为跳过日志所以一切正常，这个 bug 因此极难排查（实测：exe 里
+    所有 POST 全挂，开发态全好）。
+    """
+    from dlink.server import Handler
+
+    class Dummy:
+        path = "/api/tasks"
+
+    monkeypatch.setattr(sys, "stderr", None)
+    Handler.log_message(Dummy(), "%s", "boom")  # 不抛异常即通过
+
+
+def test_version_comes_from_package():
+    """version 不许在 server.py 里硬编码，否则 /api/health 永远报旧版本。"""
+    import dlink
+    from dlink.server import VERSION
+
+    assert VERSION == dlink.__version__
+
+
+# ---------------- 按主机学到的并发不能突破平台上限 ----------------
+
+def test_host_learning_cannot_exceed_platform_cap(tmp_path, monkeypatch):
+    """★ 回归：主机学到 8 路时，百度任务仍必须是 1 路。
+
+    实测：百度 1 路 75 KB/s、3 路 130 KB/s、8 路 9 KB/s（触发风控）。
+    曾经 `effective_workers` 直接把学习值返回，导致同一主机上先跑一个
+    普通链接任务（学到 8 路）后，百度任务也跟着 8 路。
+    """
+    from dlink import host_learn
+
+    monkeypatch.setenv("DLINK_HOSTS_FILE", str(tmp_path / "hosts.json"))
+    url = "https://d.pcs.baidu.com/file/abc"
+    host_learn.record(url, workers=8, attempted=8, failed=0)  # 表现良好 → 记住 8
+    assert host_learn.learned_workers(url) == 8
+
+    workers, src = host_learn.effective_workers(url, 1)
+    assert workers == 1, "百度必须封顶 1 路"
+    assert "封顶" in src
+
+
+def test_host_learning_still_lowers_default(tmp_path, monkeypatch):
+    """学习值比平台默认更保守时，要用学习值（这是它的本来用途）。"""
+    from dlink import host_learn
+
+    monkeypatch.setenv("DLINK_HOSTS_FILE", str(tmp_path / "hosts.json"))
+    url = "https://proof.example.com/big.bin"
+    host_learn.record(url, workers=8, attempted=8, failed=8)  # 全失败 → 降档
+    learned = host_learn.learned_workers(url)
+    assert learned is not None and learned < 8
+
+    workers, src = host_learn.effective_workers(url, 8)
+    assert workers == learned
+    assert "学习值" in src
+
+
+def test_host_learning_ignored_when_never_seen(tmp_path, monkeypatch):
+    from dlink import host_learn
+
+    monkeypatch.setenv("DLINK_HOSTS_FILE", str(tmp_path / "hosts.json"))
+    workers, src = host_learn.effective_workers("https://new.example.com/x", 6)
+    assert workers == 6
+    assert src == "平台默认"

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "DLink 直链获取器",
-  "version": "0.1.0",
-  "description": "从网盘分享页提取直链，发送到本地下载器。不劫持浏览器原生下载。",
+  "version": "0.2.0",
+  "description": "从网盘分享页提取直链并可选接管浏览器下载，交给本地 DLink 下载器完成。",
   "permissions": [
     "cookies",
     "storage",
@@ -11,7 +11,12 @@
     "declarativeNetRequest",
     "declarativeNetRequestWithHostAccess",
     "tabs",
-    "alarms"
+    "alarms",
+    "downloads",
+    "notifications"
+  ],
+  "optional_host_permissions": [
+    "<all_urls>"
   ],
   "host_permissions": [
     "https://pan.baidu.com/*",
@@ -34,6 +39,10 @@
   "action": {
     "default_popup": "popup.html",
     "default_title": "DLink 直链获取器"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
   },
   "content_scripts": [
     {

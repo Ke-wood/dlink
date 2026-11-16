@@ -10,6 +10,14 @@
  *
  * 所以每个平台都通过 `chrome.scripting.executeScript` 注入执行，
  * 而不是在 background 里直接请求。
+ *
+ * 这个文件同时负责「域名 → 平台」的映射，供两处使用：
+ *   · 分享页 URL（detectPlatform）—— popup 提取直链时
+ *   · CDN 直链 URL（platformForDownloadUrl）—— 接管浏览器下载时
+ *
+ * 后者是**必须**的：接管到的是 `d.pcs.baidu.com/...` 这类 CDN 地址，
+ * 如果一律按 direct（8 路并发）跑，百度会触发账号级限速掉到 9 KB/s
+ * （见 docs/PLATFORMS.md 实测数据）。
  */
 
 export const PLATFORMS = {
@@ -39,29 +47,104 @@ export const PLATFORMS = {
   },
 };
 
-export function detectPlatform(url) {
-  let u;
+/** 平台 id → 中文名（含 direct 兜底），给 UI 用 */
+export const PLATFORM_NAMES = {
+  baidu: '百度网盘',
+  quark: '夸克网盘',
+  uc: 'UC 网盘',
+  weiyun: '腾讯微云',
+  direct: '普通链接',
+};
+
+/**
+ * CDN 直链域名 → 平台。
+ *
+ * ⚠️ CDN 域名会变，且前缀随机（实测夸克是 `dl-pc-zb-j.drive.quark.cn`），
+ *    所以正则一律写成 `*.drive.quark.cn` 这种宽松形式，兜底 `direct`。
+ *    新增平台时，这里必须加一行（见 docs/PLATFORMS.md 接入清单）。
+ */
+const DOWNLOAD_HOST_MAP = [
+  { re: /(^|\.)pcs\.baidu\.com$/i, platform: 'baidu' },
+  { re: /(^|\.)baidupcs\.com$/i, platform: 'baidu' },
+  { re: /(^|\.)drive\.quark\.cn$/i, platform: 'quark' },
+  { re: /(^|\.)quark\.cn$/i, platform: 'quark' },
+  { re: /(^|\.)drive\.uc\.cn$/i, platform: 'uc' },
+  { re: /(^|\.)uc\.cn$/i, platform: 'uc' },
+  { re: /(^|\.)weiyun\.com$/i, platform: 'weiyun' },
+];
+
+function safeUrl(url) {
   try {
-    u = new URL(url);
+    return new URL(url);
   } catch {
     return null;
   }
+}
+
+/** 取 hostname（解析失败返回空串，不抛异常） */
+export function hostOf(url) {
+  const u = safeUrl(url);
+  return u ? u.hostname.toLowerCase() : '';
+}
+
+/** 这个 host 是不是已知网盘（含 CDN）？ —— 决定「只接管网盘」模式下是否动手 */
+export function isNetdiskHost(host) {
+  const h = String(host || '').toLowerCase();
+  if (!h) return false;
+  for (const p of Object.values(PLATFORMS)) if (p.host.test(h)) return true;
+  for (const m of DOWNLOAD_HOST_MAP) if (m.re.test(h)) return true;
+  return false;
+}
+
+/** 这个 URL 是不是已知网盘（含 CDN）？ */
+export function isNetdiskUrl(url) {
+  return isNetdiskHost(hostOf(url));
+}
+
+export function detectPlatform(url) {
+  const u = safeUrl(url);
+  if (!u) return null;
   for (const p of Object.values(PLATFORMS)) {
     if (p.host.test(u.hostname)) return p;
   }
   return null;
 }
 
+/**
+ * 由**下载地址**推断平台（接管场景的主力函数）。
+ * 拿不准就返回 'direct' —— 宁可少并发，也不要给百度上 8 路。
+ */
+export function platformForDownloadUrl(url) {
+  const h = hostOf(url);
+  if (!h) return 'direct';
+  for (const m of DOWNLOAD_HOST_MAP) if (m.re.test(h)) return m.platform;
+  return 'direct';
+}
+
+/**
+ * 综合推断：先看下载地址本身，再看 Referer（分享页域名）。
+ * CDN 域名没被覆盖时，Referer 往往还留在分享页，能救回来。
+ */
+export function inferPlatform(url, referrer) {
+  const byUrl = platformForDownloadUrl(url);
+  if (byUrl !== 'direct') return byUrl;
+  const p = detectPlatform(referrer || '');
+  if (p) return p.id;
+  return 'direct';
+}
+
 /** 解析分享 ID */
 export function parseShareId(url, platform) {
-  const u = new URL(url);
+  const u = safeUrl(url);
+  if (!u) return null;
   const m = u.pathname.match(platform.shareUrl);
   return m ? m[1] : null;
 }
 
 /** 解析提取码（?pwd= 或 #pwd=） */
 export function parsePwd(url) {
-  const u = new URL(url);
+  const u = safeUrl(url);
+  if (!u) return null;
   const q = u.searchParams.get('pwd') || u.searchParams.get('passcode');
   if (q) return q;
   const frag = u.hash || '';

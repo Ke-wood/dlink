@@ -1,5 +1,7 @@
 /** popup 交互逻辑 */
 
+import { getSettings, setSettings } from './settings.js';
+
 const $ = (id) => document.getElementById(id);
 let currentResult = null;
 
@@ -148,6 +150,40 @@ $('btn-send').addEventListener('click', async () => {
   }
 });
 
+// ---------------- 顶部接管开关 ----------------
+
+function renderModeSub(st) {
+  const on = $('toggle-intercept').checked;
+  $('mode-sub').textContent = on
+    ? (st['intercept.mode'] === 'all' ? '已开启：接管所有下载' : '已开启：只接管网盘链接')
+    : '关闭时浏览器下载不受影响';
+}
+
+async function initToggle() {
+  try {
+    const st = await getSettings();
+    $('toggle-intercept').checked = !!st['intercept.enabled'];
+    renderModeSub(st);
+  } catch (e) {
+    console.warn('[DLink] 读取接管开关失败', e);
+  }
+}
+
+$('toggle-intercept').addEventListener('change', async (e) => {
+  const on = e.target.checked;
+  const patch = { 'intercept.enabled': on };
+  // 用户主动开关过，就不再弹首次询问窗口
+  if (on) patch['intercept.asked'] = true;
+  await setSettings(patch);
+  renderModeSub(await getSettings());
+  setStatus(on ? '已开启接管' : '已关闭接管', on ? 'ok' : '');
+});
+
+$('btn-options').addEventListener('click', () => {
+  chrome.runtime.openOptionsPage();
+});
+
 // 打开时检测下载器
+initToggle();
 checkDownloader();
 setInterval(checkDownloader, 3000);

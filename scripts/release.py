@@ -78,14 +78,16 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag", required=True)
     ap.add_argument("--notes", default="RELEASE_NOTES.md")
-    ap.add_argument("--file", default="dist/DLink.exe")
+    ap.add_argument("--file", nargs="+", default=["dist/DLink.exe"],
+                    help="要上传的附件（可多个）")
     ap.add_argument("--draft", action="store_true")
     a = ap.parse_args()
 
     token = get_token()
-    exe = Path(a.file)
-    if not exe.exists():
-        raise SystemExit(f"找不到 {exe}，先跑 PyInstaller")
+    files = [Path(f) for f in a.file]
+    for f in files:
+        if not f.exists():
+            raise SystemExit(f"找不到 {f}，先跑 PyInstaller / pack_extension.py")
 
     notes = Path(a.notes).read_text(encoding="utf-8") if Path(a.notes).exists() else ""
 
@@ -106,20 +108,26 @@ def main() -> int:
     else:
         rel = existing
         print("release 已存在:", rel.get("html_url"))
+        if notes:
+            upd = api(token, "PATCH", f"/repos/{REPO}/releases/{rel['id']}",
+                      {"body": notes})
+            print("  说明已更新" if not upd.get("_error")
+                  else f"  说明更新失败: {upd.get('_error')}")
 
     # 2. 上传（先删同名旧附件）
     assets = api(token, "GET", f"/repos/{REPO}/releases/{rel['id']}/assets")
-    for asset in (assets if isinstance(assets, list) else []):
-        if asset.get("name") == exe.name:
-            api(token, "DELETE", f"/repos/{REPO}/releases/assets/{asset['id']}")
-            print("  已删除旧附件:", exe.name)
-
-    print(f"上传 {exe.name}（{exe.stat().st_size / 1e6:.1f} MB）…")
-    up = upload_asset(token, rel["upload_url"], exe)
-    if up.get("_error"):
-        print("上传失败:", up["_error"], up.get("_body", "")[:300])
-        return 1
-    print("上传成功:", up.get("browser_download_url"))
+    existing_assets = assets if isinstance(assets, list) else []
+    for f in files:
+        for asset in existing_assets:
+            if asset.get("name") == f.name:
+                api(token, "DELETE", f"/repos/{REPO}/releases/assets/{asset['id']}")
+                print("  已删除旧附件:", f.name)
+        print(f"上传 {f.name}（{f.stat().st_size / 1e6:.1f} MB）…")
+        up = upload_asset(token, rel["upload_url"], f)
+        if up.get("_error"):
+            print("上传失败:", up["_error"], up.get("_body", "")[:300])
+            return 1
+        print("上传成功:", up.get("browser_download_url"))
     print("\nRelease 地址:", rel["html_url"])
     return 0
 

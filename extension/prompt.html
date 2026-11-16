@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>DLink · 接管浏览器下载？</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font: 13px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: #e8e8e8; background: #121212; padding: 18px 20px 16px;
+      display: flex; flex-direction: column; gap: 14px; min-height: 100vh;
+    }
+    h1 { font-size: 15px; font-weight: 600; letter-spacing: .2px; }
+    .sec { border: 1px solid #2e2e2e; border-radius: 8px; padding: 12px 14px; background: #181818; }
+    .sec > h2 {
+      font-size: 11px; font-weight: 600; color: #8a8a8a;
+      letter-spacing: 1px; margin-bottom: 8px;
+    }
+    p { color: #c8c8c8; }
+    .file { margin-top: 8px; padding: 8px 10px; background: #0f0f0f; border-radius: 6px;
+            border-left: 3px solid #fff; }
+    .file .name { color: #fff; font-weight: 500; word-break: break-all; }
+    .file .meta { color: #7a7a7a; font-size: 11px; margin-top: 2px; }
+    .choices { display: flex; gap: 8px; margin-top: 4px; }
+    button {
+      font: inherit; cursor: pointer; border-radius: 6px; padding: 9px 12px;
+      border: 1px solid #fff; background: #fff; color: #000; font-weight: 600;
+    }
+    button.ghost { background: transparent; color: #e8e8e8; border-color: #4a4a4a; font-weight: 500; }
+    button:hover { opacity: .88; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .choices button { flex: 1; }
+    .radios { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+    label.radio { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; color: #c8c8c8; }
+    label.radio input { margin-top: 3px; accent-color: #fff; }
+    label.radio b { color: #fff; font-weight: 600; }
+    .where { color: #c8c8c8; }
+    .where code { background: #262626; padding: 1px 5px; border-radius: 3px; color: #fff; }
+    .where a { color: #fff; }
+    .foot { color: #6f6f6f; font-size: 11px; margin-top: auto; }
+    .err { color: #fff; background: #2a2a2a; border: 1px solid #444; padding: 8px 10px;
+           border-radius: 6px; display: none; }
+  </style>
+</head>
+<body>
+  <h1>要接管浏览器下载吗？</h1>
+
+  <div class="sec">
+    <h2>① 这是什么</h2>
+    <p>DLink 可以接管浏览器发起的下载，转由本地下载器完成：多线程、断点续传、直链过期自动续链。
+       <br>接管后，浏览器自己的下载栏里不会再出现这些文件。</p>
+    <div class="file">
+      <div class="name" id="fname">（正在读取…）</div>
+      <div class="meta" id="fmeta"></div>
+    </div>
+  </div>
+
+  <div class="sec">
+    <h2>② 怎么接管</h2>
+    <div class="choices">
+      <button id="btn-accept">接管并转到 DLink</button>
+      <button id="btn-decline" class="ghost">保持浏览器下载</button>
+    </div>
+    <div class="radios">
+      <label class="radio">
+        <input type="radio" name="mode" value="netdisk" checked>
+        <span><b>只接管网盘链接</b>（推荐）—— 其他文件仍由浏览器下载</span>
+      </label>
+      <label class="radio">
+        <input type="radio" name="mode" value="all">
+        <span><b>接管所有下载</b> —— 所有经过浏览器的下载都转给 DLink</span>
+      </label>
+    </div>
+  </div>
+
+  <div class="sec">
+    <h2>③ 以后在哪里改</h2>
+    <p class="where">
+      扩展图标 → 右键 → <code>选项</code> → 「接管浏览器下载」，可随时开/关、改接管范围、加放行域名。<br>
+      也可以直接点扩展面板顶部的开关，或点这里 <a href="#" id="open-options">打开设置页</a>。
+    </p>
+  </div>
+
+  <div id="err" class="err"></div>
+  <div class="foot">
+    当前文件已暂停，尚未从浏览器下载栏移除；选择「保持浏览器下载」会原样继续。
+  </div>
+
+  <script type="module" src="prompt.js"></script>
+</body>
+</html>

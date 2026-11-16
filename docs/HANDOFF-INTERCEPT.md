@@ -2,6 +2,19 @@
 
 > 写给接手的新 agent。本文自包含，不依赖前序会话上下文。
 > 日期：2026-11-16　版本基线：v0.1.0（已发布）
+>
+> **⚠️ 状态更新（v0.2.0 已实现）**：§5 的阶段 1–3 已完成并落地为代码 ——
+> `extension/intercept.js`（接管主流程）、`prompt.html/js`（首次三块信息提示窗口）、
+> `options.html/js`（完整设置页）、`popup.html/js`（顶部开关）、
+> `extension/settings.js`、`extension/downloader.js`（从 background.js 抽出，避免循环 import）、
+> `extension/platforms.js` 的 `platformForDownloadUrl()` / `inferPlatform()`。
+> 验证方式：`node --test tests/js/*.test.mjs`（27 项，含 14 项假 chrome 环境的流程测试）
+> + `python scripts/check_extension.py`（manifest/版本/语法/隐私）。
+> §7 的 5 个待决策问题已按下列默认执行：只接管网盘为默认、提示框默认勾「只接管网盘」、
+> 「本次放行」放在选项页（未做右键菜单，省一个 `contextMenus` 权限）、
+> 平台路线图先做阿里云盘、暂不上架商店。
+> 服务端同时加固了 `safe_basename()`：浏览器给的 `filename` 是完整本地路径，
+> 不剥掉会把文件写到保存目录之外。
 
 ---
 

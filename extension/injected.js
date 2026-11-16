@@ -17,7 +17,7 @@
   //   以前写的是 `if (window.__DLINK__) return;` —— 扩展更新后重新注入时，
   //   页面里的旧对象还活着，新代码直接被挡掉，用户必须手动 F5 才能生效，
   //   表现就是「明明更新了扩展，功能还是旧的」。
-  const BUILD = '0.2.5';
+  const BUILD = '0.2.7';
   if (window.__DLINK__ && window.__DLINK__.build === BUILD) return;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -327,103 +327,165 @@
    * ⚠️ 副作用：会在用户网盘**根目录**留下一个副本，占空间，需要用户自己删。
    *    所以调用方必须把这件事告诉用户。
    */
-  /** 在自己网盘根目录按文件名找 fs_id。
+  /** 在自己网盘的某个目录里按文件名找 fs_id。
    *
-   * 用途：转存返回 errno=4「文件已转存」时，说明文件早就在网盘里了
-   * （实测这个分享第一次就撞上），此时不该报错，而是直接拿它的 fs_id 去取直链。
-   * 名字可能被百度加了 (1) 后缀，所以先精确匹配、再去后缀匹配。
+   * 用途：转存返回 errno=4「文件已转存」时说明文件已在网盘里（可能是上次留下的，
+   * 也可能是同名不同文件 —— 实测就撞过 29MB 的同名 PC.7z），
+   * 这时按「名字 + 大小」双重匹配，避免拿错文件。
    */
-  async function baiduFindInRoot(name, bdstoken) {
+  async function baiduFindInDir(dir, name, size, bdstoken) {
     if (!name) return '';
     const q = new URLSearchParams({
-      dir: '/', order: 'name', desc: '0', num: '1000', page: '1',
+      dir: dir || '/', order: 'name', desc: '0', num: '1000', page: '1',
       channel: 'chunlei', web: '1', app_id: '250528',
       clienttype: '0', bdstoken,
     });
     try {
       const j = await (await fetch('https://pan.baidu.com/api/list?' + q,
-        { credentials: 'include' })).json();
+        { credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } })).json();
       if (j.errno !== 0) return '';
       const list = j.list || [];
-      const exact = list.find((x) => x.server_filename === name);
+      // 优先「同名 + 同大小」，避免撞上同名但内容不同的文件
+      const exact = list.find((x) => x.server_filename === name
+        && (!size || Number(x.size) === Number(size)));
       if (exact) return String(exact.fs_id);
-      const stem = name.replace(/\(\d+\)(\.[^.]+)?$/, '$2');
-      const loose = list.find((x) => String(x.server_filename || '').replace(/\(\d+\)(\.[^.]+)?$/, '$2') === stem);
+      const loose = list.find((x) => x.server_filename === name);
       return loose ? String(loose.fs_id) : '';
     } catch (e) {
       return '';
     }
   }
 
-  async function baiduTransferThenLink(surl, f, seckey, bdstoken) {
-    if (!bdstoken) {
-      return { ok: false, message: '没有 bdstoken（未登录？），无法转存' };
-    }
-    const q = (extra) => '?' + new URLSearchParams({
-      channel: 'chunlei', web: '1', app_id: '250528', clienttype: '0',
-      bdstoken, ...extra,
-    });
-    try {
-      const tr = await fetch(
-        'https://pan.baidu.com/share/transfer' + q({
-          shareid: String(f.shareid), from: String(f.uk),
-          sekey: seckey || '',
-        }),
-        {
-          method: 'POST', credentials: 'include',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            fsidlist: JSON.stringify([f.fid]), path: '/',
-          }).toString(),
-        });
-      const tj = await tr.json();
-      let fid = '';
-      if (tj.errno === 0) {
-        const moved = (tj.extra && tj.extra.list) || [];
-        fid = moved[0] ? String(moved[0].to_fs_id || '') : '';
-        if (!fid) fid = await baiduFindInRoot(f.name, bdstoken);
-      } else if (tj.errno === 4) {
-        // 「文件已转存」：网盘里本来就有（可能上次转存留下的），直接找出来用
-        fid = await baiduFindInRoot(f.name, bdstoken);
-        if (!fid) {
+  /** 从「自己的网盘」取直链。
+   *
+   * ⚠️ 参数名是 `fsids`，不是 `target`。
+   *   实测（2026-11-16）：用 `target=` 调 /api/filemetas，无论文件是否存在
+   *   都会返回 errno=12、info:[{errno:31021}]；换成 `fsids=` 立刻返回
+   *   errno=0 + dlink。`target` 是**分享**接口的参数，张冠李戴了。
+   */
+  async function baiduOwnDlink(fid, bdstoken) {
+    const base = {
+      dlink: '1', channel: 'chunlei', web: '1', app_id: '250528',
+      clienttype: '0', bdstoken,
+    };
+    const variants = [
+      { fsids: JSON.stringify([Number(fid)]) },
+      { fsids: JSON.stringify([String(fid)]) },
+    ];
+    let lastErrno = null;
+    for (const extra of variants) {
+      const q = new URLSearchParams({ ...base, ...extra });
+      try {
+        const j = await (await fetch(`https://pan.baidu.com/api/filemetas?${q}`,
+          { credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } })).json();
+        const info = (j.info || [])[0] || {};
+        if (j.errno === 0 && info.dlink) {
           return {
-            ok: false,
-            message: '网盘提示「已转存过」，但根目录里没找到同名文件'
-              + '（可能被改名或移走了）',
-            errno: 4,
+            ok: true,
+            url: info.dlink,
+            size: Number(info.size || 0),
+            md5: (info.md5 || '').toLowerCase(),
+            name: info.server_filename || '',
           };
         }
-      } else {
+        lastErrno = j.errno;
+      } catch (e) {
+        lastErrno = 'exception';
+      }
+    }
+    return { ok: false, message: `取自己网盘直链失败（errno=${lastErrno}）` };
+  }
+
+  /** 转存目标目录：独立一个目录，既避免根目录同名冲突，也方便用户清理。 */
+  const BAIDU_TRANSFER_DIR = '/DLink';
+
+  async function baiduMkdir(path, bdstoken) {
+    const q = '?a=commit&channel=chunlei&web=1&app_id=250528&clienttype=0&bdstoken='
+      + encodeURIComponent(bdstoken);
+    try {
+      const j = await (await fetch('https://pan.baidu.com/api/create' + q, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          path, isdir: '1', block_list: '[]', size: '0',
+        }).toString(),
+      })).json();
+      return j.errno === 0 || j.errno === -8;   // -8 = 已存在
+    } catch (e) {
+      return false;
+    }
+  }
+
+  async function baiduTransferTo(dir, f, seckey, bdstoken) {
+    const q = '?' + new URLSearchParams({
+      shareid: String(f.shareid), from: String(f.uk), sekey: seckey || '',
+      channel: 'chunlei', web: '1', app_id: '250528', bdstoken, clienttype: '0',
+    });
+    try {
+      return await (await fetch('https://pan.baidu.com/share/transfer' + q, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          fsidlist: JSON.stringify([f.fid]), path: dir,
+        }).toString(),
+      })).json();
+    } catch (e) {
+      return { errno: -1, errmsg: String(e) };
+    }
+  }
+
+  /** 兜底：转存到自己的网盘，再取自己网盘的直链。
+   *
+   * 为什么需要：这个分享（文件夹分享 + 原文件 1.56GB）用 /api/sharedownload
+   * 无论怎么调都是 118「违规操作」/ -20 / 9019 —— 变化无常，明显是风控。
+   * 走「转存 → 从自己网盘取直链」就绕开了分享下载接口，实测可通。
+   *
+   * ⚠️ 副作用：会在用户网盘里留一份副本（默认 /DLink），占空间，要用户自己删。
+   */
+  async function baiduTransferThenLink(surl, f, seckey, bdstoken) {
+    if (!bdstoken) return { ok: false, message: '没有 bdstoken（登录态异常）' };
+
+    await baiduMkdir(BAIDU_TRANSFER_DIR, bdstoken);
+    let dir = BAIDU_TRANSFER_DIR;
+    let tj = await baiduTransferTo(dir, f, seckey, bdstoken);
+    if (tj.errno === 2) {          // 目录不可用 → 退回根目录
+      dir = '/';
+      tj = await baiduTransferTo('/', f, seckey, bdstoken);
+    }
+
+    let fid = '';
+    if (tj.errno === 0) {
+      const moved = (tj.extra && tj.extra.list) || [];
+      fid = moved[0] ? String(moved[0].to_fs_id || '') : '';
+    } else if (tj.errno === 4) {
+      // 已转存过：去目标目录里按「名字 + 大小」找回来
+      fid = await baiduFindInDir(dir, f.name, f.size, bdstoken);
+      if (!fid) {
         return {
           ok: false,
-          message: `转存失败 errno=${tj.errno} ${tj.show_msg || ''}`.trim(),
-          errno: tj.errno,
+          message: `网盘提示「已转存」，但${dir}里没找到同名且同大小的文件`
+            + '（可能被改名/移动，或同名文件内容不同）',
         };
       }
-      if (!fid) return { ok: false, message: '转存成功但没拿到 fs_id' };
-
-      const meta = await (await fetch(
-        'https://pan.baidu.com/api/filemetas'
-        + q({ target: JSON.stringify([fid]), dlink: '1' }),
-        { credentials: 'include' })).json();
-      if (meta.errno !== 0) {
-        return { ok: false, message: `filemetas errno=${meta.errno}` };
-      }
-      const info = (meta.info || [])[0] || {};
-      if (!info.dlink) {
-        return { ok: false, message: 'transferred 但 filemetas 里没有 dlink' };
-      }
+    } else {
       return {
-        ok: true,
-        url: info.dlink,
-        size: Number(info.size || f.size || 0),
-        md5: (info.md5 || '').toLowerCase(),
-        transferred: true,
-        name: info.server_filename || f.name,
+        ok: false,
+        message: `转存失败 errno=${tj.errno} ${tj.errmsg || tj.show_msg || ''}`.trim(),
       };
-    } catch (e) {
-      return { ok: false, message: `转存请求失败：${e && e.message ? e.message : e}` };
     }
+    if (!fid) fid = await baiduFindInDir(dir, f.name, f.size, bdstoken);
+    if (!fid) return { ok: false, message: '转存后没找到目标文件' };
+
+    const own = await baiduOwnDlink(fid, bdstoken);
+    if (!own.ok) return own;
+    return {
+      ok: true,
+      url: own.url,
+      size: own.size || f.size || 0,
+      md5: own.md5 || '',
+      name: own.name || f.name,
+      transferredTo: dir,
+    };
   }
 
   async function baiduDlink(surl, f, sekeyHint) {
@@ -513,6 +575,7 @@
           // 转存下载拿不到分享页信息，过期后没法自动续链
           refresh: null,
           transferred: true,
+          transferredTo: tr.transferredTo || '',
         },
       };
     }
@@ -537,7 +600,7 @@
         + `${emptyList.error_code ? ` error_code=${emptyList.error_code}` : ''}`
         + `${emptyList.error_msg ? ` ${emptyList.error_msg}` : ''}`;
     }
-    msg += `；转存也失败：${tr.message}`;
+    msg += `；转存兜底也失败：${tr.message}`;
     return { ok: false, message: msg };
   }
 

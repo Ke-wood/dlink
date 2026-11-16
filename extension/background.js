@@ -125,8 +125,9 @@ async function handleResolve(tab) {
       cookies: mergeCookies(f.cookies || {}, httpOnly),
       headers: f.headers || {},
       refresh: f.refresh || null,
-      // 转存兜底拿到的直链：会在用户网盘根目录留副本，UI 要提示
+      // 转存兜底拿到的直链：会在用户网盘留副本，UI 要提示（带目录）
       transferred: !!f.transferred,
+      transferredTo: f.transferredTo || '',
     });
   }
   return { platform: platform.id, platformName: platform.name, items };

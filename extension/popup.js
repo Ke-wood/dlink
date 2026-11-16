@@ -45,7 +45,9 @@ function renderList(items) {
     if (it.status === 'ok') {
       const bits = [fmtSize(it.size)];
       if (it.md5) bits.push('md5 ' + it.md5.slice(0, 8));
-      if (it.transferred) bits.push('已转存到网盘根目录，请自行删除');
+      if (it.transferred) {
+        bits.push(`已转存到网盘${it.transferredTo || '根目录'}，请自行删除`);
+      }
       meta.textContent = bits.filter(Boolean).join(' · ');
     } else {
       meta.textContent = '提取失败';

@@ -39,7 +39,8 @@ PRIVACY_BLACKLIST = (
     "d:" + "\\plan",
 )
 SCAN_EXTS = {".py", ".js", ".json", ".md", ".html", ".css", ".toml", ".txt", ".spec", ".yml"}
-SKIP_DIRS = {".git", "build", "dist", ".vendor", "node_modules", "__pycache__", ".pytest_cache"}
+SKIP_DIRS = {".git", "build", "dist", ".vendor", "node_modules", "__pycache__",
+             ".pytest_cache", "tmp_tests", ".tmp", "probe"}
 
 errors: list[str] = []
 notes: list[str] = []

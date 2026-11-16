@@ -17,7 +17,7 @@
   //   以前写的是 `if (window.__DLINK__) return;` —— 扩展更新后重新注入时，
   //   页面里的旧对象还活着，新代码直接被挡掉，用户必须手动 F5 才能生效，
   //   表现就是「明明更新了扩展，功能还是旧的」。
-  const BUILD = '0.3.0';
+  const BUILD = '0.3.1';
   if (window.__DLINK__ && window.__DLINK__.build === BUILD) return;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -855,14 +855,14 @@
     const gtk = weiyunCalcGtk((opts && opts.skey) || pageSkey);
     const out = [];
     for (const f of files) {
-      const link = await weiyunDlink(key, gtk, f);
+      const link = await weiyunDlink(key, gtk, f, opts);
       if (link.ok) out.push(link.item);
       else out.push({ ...f, error: link.message });
     }
     return { ok: true, files: out };
   }
 
-  async function weiyunDlink(shareKey, gtk, f) {
+  async function weiyunDlink(shareKey, gtk, f, opts) {
     const header = {
       seq: Math.floor(Math.random() * 2 ** 31),
       type: 1, cmd: 12024, appid: 30151,
@@ -898,7 +898,19 @@
           req_body: JSON.stringify(body),
         }),
       });
-    const j = await r.json();
+    // 空 body（403）说明 g_tk/Accept 有问题，不能让 r.json() 抛
+    // SyntaxError 把整个解析过程带崩
+    const raw = await r.text();
+    let j = null;
+    try { j = JSON.parse(raw); } catch (e) { j = null; }
+    if (!j) {
+      return {
+        ok: false,
+        message: `微云接口返回非 JSON（HTTP ${r.status}`
+          + `${raw ? '' : '，空响应'}）——多半是 g_tk 与 skey 不匹配，或缺 Accept 头`
+          + `${(opts && opts.cookieNames) ? `；已读到 ${opts.cookieNames} 个 cookie` : '；没读到任何 cookie'}`,
+      };
+    }
     const rc = j.data && j.data.rsp_header && j.data.rsp_header.retcode;
     if (rc !== 0) {
       return {

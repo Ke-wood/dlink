@@ -38,14 +38,26 @@ async function resolveOptions(platformId) {
   // 只有扩展能用 chrome.cookies 取。拿不到 skey 就只能发 g_tk=0（被当游客，
   // 大文件下载一律 403）。
   if (platformId === 'weiyun') {
-    for (const url of ['https://share.weiyun.com', 'https://www.weiyun.com']) {
+    // skey 可能在 weiyun 域，也可能在 QQ 域（微云走 QQ 账号体系）。
+    // 只查 share.weiyun.com 往往拿不到 —— 实测就是这样，g_tk 算成 0，
+    // 接口一律 403 空 body，前端再 r.json() 就报
+    //   SyntaxError: Unexpected end of JSON input
+    const jar = {};
+    const queries = [
+      { url: 'https://share.weiyun.com' },
+      { url: 'https://www.weiyun.com' },
+      { domain: 'weiyun.com' },
+      { domain: 'qq.com' },
+    ];
+    for (const q of queries) {
       try {
-        const list = await chrome.cookies.getAll({ url });
-        const pick = list.find((c) => c.name === 'skey')
-          || list.find((c) => c.name === 'p_skey');
-        if (pick && pick.value) { opts.skey = pick.value; break; }
-      } catch { /* ignore */ }
+        const list = await chrome.cookies.getAll(q);
+        for (const c of list) if (c && c.name) jar[c.name] = c.value;
+      } catch { /* 没权限就跳过这个源 */ }
     }
+    const skey = jar.skey || jar.p_skey || '';
+    if (skey) opts.skey = skey;
+    opts.cookieNames = Object.keys(jar).length;   // 只用于诊断，不含值
   }
   return opts;
 }

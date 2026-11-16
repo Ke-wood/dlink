@@ -50,3 +50,6 @@ desktop.ini
 
 # 手工解包的测试依赖（本机 pytest 缺失时的临时方案）
 .vendor/
+
+# 本地启动日志
+tmp_launch.log

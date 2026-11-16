@@ -609,11 +609,16 @@
       }
     },
     // 诊断用
+    // 诊断用：分享页 Console 里跑 __DLINK__.probe()，看 sekey 各来源有没有
     probe: () => ({
       url: location.href,
       hasYunData: !!window.yunData,
       hasJsToken: !!window.jsToken,
-      hasSekey: !!window.currentSekey,
+      hasCurrentSekey: !!window.currentSekey,
+      hasYunDataSekey: !!(window.yunData && window.yunData.sekey),
+      hasBdclndCookie: /(?:^|;\s*)BDCLND=/.test(String(document.cookie || '')),
+      sekeyCandidates: (typeof baiduSekeyCandidates === 'function')
+        ? baiduSekeyCandidates().length : -1,
       cookieNames: (document.cookie || '').split(';').map((x) => x.split('=')[0].trim()),
     }),
   };

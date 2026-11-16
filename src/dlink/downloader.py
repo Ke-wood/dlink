@@ -344,12 +344,24 @@ def _build_headers(link: DirectLink, start: int, end: int) -> dict:
 
 
 def _check_status(resp: requests.Response, link: DirectLink, seg: _Seg) -> None:
-    """401/403 → LinkExpired；其余交给调用方按可重试/致命分类。"""
+    """401/403 → LinkExpired；其余交给调用方按可重试/致命分类。
+
+    403 的原因差别很大：真过期、缺 cookie、UA 被拒（百度返回
+    `error_code:31326 user is not authorized`）。所以把响应体带出来 ——
+    不带的话只能看到「HTTP 403」，等于没有线索（实测被这个坑过一轮）。
+    """
     if resp.status_code in EXPIRED_STATUS:
+        detail = ""
+        try:
+            body = (resp.content or b"")[:200].decode("utf-8", "replace").strip()
+            if body:
+                detail = f"：{body}"
+        except Exception:
+            pass
         raise LinkExpired(
-            f"下载直链返回 HTTP {resp.status_code}（段 {seg.index}），链接已失效或鉴权缺失",
+            f"下载直链返回 HTTP {resp.status_code}（段 {seg.index}）{detail}",
             hint="直链有时效，请重新执行 resolve 获取新链接"
-            "（若是 401，多半是缺 FTN5K 之类的 cookie，重新 resolve 会带上）",
+            "（401/403 也可能是缺 BDUSS 之类 cookie，或 UA 被拒 —— 百度对浏览器 UA 会回 31326）",
         )
 
 

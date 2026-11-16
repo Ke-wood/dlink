@@ -17,7 +17,7 @@
   //   以前写的是 `if (window.__DLINK__) return;` —— 扩展更新后重新注入时，
   //   页面里的旧对象还活着，新代码直接被挡掉，用户必须手动 F5 才能生效，
   //   表现就是「明明更新了扩展，功能还是旧的」。
-  const BUILD = '0.2.7';
+  const BUILD = '0.2.8';
   if (window.__DLINK__ && window.__DLINK__.build === BUILD) return;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -539,7 +539,12 @@
             md5: (it.md5 || f.md5 || '').toLowerCase(),
             // 直链必须带 BDUSS 系 cookie，否则 403 error_code:31045
             cookies: await pickCookies('baidu'),
-            headers: { Referer: 'https://pan.baidu.com/' },
+            // ★ UA 必须是客户端 UA：百度 CDN 对浏览器 UA 会返回
+            //   error_code 31326「user is not authorized」（AList 文档亦如此）
+            headers: {
+              Referer: 'https://pan.baidu.com/',
+              'User-Agent': 'netdisk',
+            },
             expires_at: expiresAtFor('baidu'),
             refresh: { platform: 'baidu', shareUrl: surl, fid: f.fid },
           },
@@ -570,7 +575,10 @@
           size: tr.size || f.size || 0,
           md5: tr.md5 || f.md5 || '',
           cookies: await pickCookies('baidu'),
-          headers: { Referer: 'https://pan.baidu.com/' },
+          headers: {
+            Referer: 'https://pan.baidu.com/',
+            'User-Agent': 'netdisk',
+          },
           expires_at: expiresAtFor('baidu'),
           // 转存下载拿不到分享页信息，过期后没法自动续链
           refresh: null,

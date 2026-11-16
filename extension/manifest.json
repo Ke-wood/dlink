@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "DLink 直链获取器",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "从网盘分享页提取直链并可选接管浏览器下载，交给本地 DLink 下载器完成。",
   "permissions": [
     "cookies",

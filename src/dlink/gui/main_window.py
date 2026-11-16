@@ -167,7 +167,7 @@ class MainWindow(QMainWindow):
         _ico = asset_path("icon256.png")
         if _ico.exists():
             self.setWindowIcon(QIcon(str(_ico)))
-        self.resize(1500, 780)
+        self.resize(1240, 760)
 
         self.api = ApiClient()
         self.smoother = SpeedSmoother()
@@ -229,26 +229,30 @@ class MainWindow(QMainWindow):
         self.table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
 
         hdr = self.table.horizontalHeader()
+        # 列宽做成**完全确定**的固定值：8 列合计约 1140px，
+        # 窗口 1240 时全部可见、右侧留一点空白。
+        # 不用 Stretch —— 之前用 Stretch 会让某一列吃掉全部剩余空间，
+        # 其他列被挤到最小，导致"状态"列看不见。
         widths = {
-            "名称": (280, 180, 900),
-            "进度": (140, 120, 190),
-            "速度": (100, 80, 140),
-            "大小": (160, 130, 230),
-            "剩余时间": (95, 80, 130),
-            "直链": (95, 80, 130),
-            "平台": (85, 70, 120),
-            "状态": (85, 70, 120),
+            "名称": 330,
+            "进度": 140,
+            "速度": 95,
+            "大小": 165,
+            "剩余时间": 95,
+            "直链": 95,
+            "平台": 80,
+            "状态": 85,
         }
+        # 最后一列（状态）吸收少量剩余空间填满表格；
+        # 因为其他 7 列宽度已固定，"吸收"的量很小（约 130px），不会喧宾夺主。
+        hdr.setStretchLastSection(True)
         for i, name in enumerate(COLUMNS):
-            mn, w, mx = widths[name]
             hdr.setSectionResizeMode(i, QHeaderView.Interactive)
-            self.table.setColumnWidth(i, w)
+            self.table.setColumnWidth(i, widths[name])
             # 数值列右对齐
             if name in ("速度", "大小", "剩余时间", "直链"):
                 item = self.table.horizontalHeaderItem(i)
                 item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        # 所有列固定初始宽度，用户可拖拽调整；不自动 Stretch（会挤掉其他列）
-        hdr.setStretchLastSection(True)
 
         layout.addWidget(self.table, 1)
 

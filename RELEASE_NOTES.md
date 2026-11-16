@@ -130,12 +130,12 @@ Windows 10/11 64 位。扩展支持 Edge / Chrome（Manifest V3，需 Chrome 102
 
 ```
 DLink.exe
-  SHA256: 716e4ea5769ae6b2b481abfa489f8f6b9524d9f9c0a520552ec1d6a6d722126c
-  大小:   57,168,317 bytes
+  SHA256: 3863555ec2715f7b713a16c026eeb1ba2561d3e7ad7c34fd511b394e361c4930
+  大小:   57,168,810 bytes（57.2 MB）
 
 dlink-extension-v0.2.0.zip
-  SHA256: cb574b87d88d89e299d2b2ea5bd6fae7c5db97824ecf91933a11420d0263fee6
-  大小:   40,489 bytes
+  SHA256: e7b4d5b730b2c3ad489f4b234ccceff58049f6807215ec0ed9cb7a01a99c4825
+  大小:   40,488 bytes
 ```
 
 Windows 上可用 `certutil -hashfile DLink.exe SHA256` 核对。

@@ -72,6 +72,13 @@ BUILTIN: dict[str, DownloadProfile] = {
         workers=6, seg_size=16 * 1024 * 1024,
         note="与夸克同架构（阿里系），推测同样的二阶段限速。尚未实测。",
     ),
+    # Cloudreve：直链是对象存储（实测 Cloudflare R2）的预签名 URL，
+    # 走 CDN、支持 Range、不限速，可以放心多段并行。
+    "cloudreve": DownloadProfile(
+        workers=8, seg_size=32 * 1024 * 1024,
+        note="Cloudreve 直链是对象存储预签名 URL（走 CDN），支持分段并行；"
+             "但签名有效期很短（实测 1 小时），过期需要重新解析。",
+    ),
 }
 
 DEFAULT_PROFILE = DownloadProfile(note="未知平台，使用通用默认值。")

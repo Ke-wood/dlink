@@ -45,6 +45,12 @@ export const PLATFORMS = {
     host: /^share\.weiyun\.com$/,
     shareUrl: /\/([A-Za-z0-9]{8,})/,
   },
+  cloudreve: {
+    id: 'cloudreve',
+    // 自建站，域名不固定 —— host 写成永不匹配，靠 URL 里的 cloudreve:// 识别
+    host: /$^/,
+    shareUrl: /cloudreve:\/\/([A-Za-z0-9]+)@|\/s\/([A-Za-z0-9]+)/,
+  },
 };
 
 /** 平台 id → 中文名（含 direct 兜底），给 UI 用 */
@@ -53,6 +59,7 @@ export const PLATFORM_NAMES = {
   quark: '夸克网盘',
   uc: 'UC 网盘',
   weiyun: '腾讯微云',
+  cloudreve: 'Cloudreve',
   direct: '普通链接',
 };
 
@@ -71,6 +78,8 @@ const DOWNLOAD_HOST_MAP = [
   { re: /(^|\.)drive\.uc\.cn$/i, platform: 'uc' },
   { re: /(^|\.)uc\.cn$/i, platform: 'uc' },
   { re: /(^|\.)weiyun\.com$/i, platform: 'weiyun' },
+  // Cloudreve 站点常用 Cloudflare R2 存储；直链是预签名 URL，可安全多线程
+  { re: /(^|\.)r2\.cloudflarestorage\.com$/i, platform: 'cloudreve' },
 ];
 
 function safeUrl(url) {
@@ -98,16 +107,31 @@ export function isNetdiskHost(host) {
 
 /** 这个 URL 是不是已知网盘（含 CDN）？ */
 export function isNetdiskUrl(url) {
+  if (looksLikeCloudreve(url)) return true;
   return isNetdiskHost(hostOf(url));
 }
 
 export function detectPlatform(url) {
   const u = safeUrl(url);
   if (!u) return null;
+  // Cloudreve 是自建站，域名任意；靠 URL 里的 cloudreve://<shareId>@share 识别。
+  // 注意这个串可能被编码成 cloudreve%3A%2F%2F（实测分享链接就是这种形态）。
+  if (looksLikeCloudreve(url)) return PLATFORMS.cloudreve;
   for (const p of Object.values(PLATFORMS)) {
-    if (p.host.test(u.hostname)) return p;
+    // host 为 /$^/ 的平台（cloudreve）靠上面显式判断，这里跳过
+    if (p.host && p.host.source !== '$^' && p.host.test(u.hostname)) return p;
   }
   return null;
+}
+
+/** 这个 URL 是不是 Cloudreve 分享页（编码/未编码都认） */
+export function looksLikeCloudreve(url) {
+  const raw = String(url || '');
+  if (!raw) return false;
+  let decoded = raw;
+  try { decoded = decodeURIComponent(raw); } catch { /* 保持原样 */ }
+  return /cloudreve:\/\/[A-Za-z0-9]+@/i.test(decoded)
+    || /cloudreve%3A%2F%2F/i.test(raw);
 }
 
 /**

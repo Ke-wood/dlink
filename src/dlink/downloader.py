@@ -344,8 +344,11 @@ def _build_headers(link: DirectLink, start: int, end: int) -> dict:
             headers["Referer"] = "https://pan.quark.cn/"
         elif "uc.cn" in url_l:
             headers["Referer"] = "https://drive.uc.cn/"
-        else:
+        elif "weiyun" in url_l:
             headers["Referer"] = "https://www.weiyun.com/"
+        # Cloudreve 走对象存储的**预签名 URL**：签名里已含授权，
+        # 额外带 Referer 反而可能被对象存储拒绝；未知域名同理不带。
+
 
     # cookies 拼成 Cookie 头（若 headers 里已手写 Cookie，则合并而不是覆盖）
     if link.cookies:

@@ -17,7 +17,7 @@
   //   以前写的是 `if (window.__DLINK__) return;` —— 扩展更新后重新注入时，
   //   页面里的旧对象还活着，新代码直接被挡掉，用户必须手动 F5 才能生效，
   //   表现就是「明明更新了扩展，功能还是旧的」。
-  const BUILD = '0.4.0';
+  const BUILD = '0.4.1';
   if (window.__DLINK__ && window.__DLINK__.build === BUILD) return;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -30,6 +30,7 @@
     quark: 6,
     uc: 6,
     weiyun: 2,
+    cloudreve: 1, // R2 预签名实测 X-Amz-Expires=3599（1 小时），留点余量
     direct: 0,   // 未知，不设过期
   };
 
@@ -992,6 +993,82 @@
     return h;
   }
 
+  /** Cloudreve（v4）分享解析。
+   *
+   * 实测：公开分享**不需要登录**，三步就能拿到对象存储（R2）的预签名直链。
+   *   GET  /api/v4/share/info/<id>
+   *   GET  /api/v4/file?uri=cloudreve://<id>@share
+   *   POST /api/v4/file/url {uris:[path], download:true}
+   *
+   * 注意：直链是预签名 URL，**有效期很短**（实测 X-Amz-Expires=3599 秒），
+   * 所以 TTL 只给 1 小时；过期只能重新解析。
+   */
+  async function cloudreveResolve(shareUrl) {
+    const org = location.origin;
+    const raw = decodeURIComponent(shareUrl || location.href);
+    const m = raw.match(/cloudreve:\/\/([A-Za-z0-9]+)@/)
+      || location.pathname.match(/\/s\/([A-Za-z0-9]+)/);
+    const shareId = m ? (m[1] || m[2]) : '';
+    if (!shareId) {
+      return { ok: false, code: 'NO_ID', message: '认不出 Cloudreve 分享 ID' };
+    }
+
+    const fail = (r) => ({
+      ok: false, code: 'HTTP_' + r.status,
+      message: `Cloudreve 接口返回 HTTP ${r.status}`,
+    });
+
+    let files = [];
+    try {
+      const r = await fetch(
+        `${org}/api/v4/file?uri=${encodeURIComponent('cloudreve://' + shareId + '@share')}`,
+        { credentials: 'include' });
+      if (!r.ok) return fail(r);
+      const j = await r.json();
+      files = (j && j.data && j.data.files) || [];
+    } catch (e) {
+      return { ok: false, code: 'EXCEPTION', message: String(e) };
+    }
+    if (!files.length) {
+      return { ok: false, code: 'EMPTY', message: '分享里没有文件（可能已失效或需要密码）' };
+    }
+
+    const out = [];
+    for (const f of files) {
+      if (f.type !== 0) {           // 1 = 文件夹，直链按文件取，先跳过
+        out.push({ name: f.name, error: '跳过文件夹，请在页面里点进去再提取' });
+        continue;
+      }
+      try {
+        const r = await fetch(`${org}/api/v4/file/url`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ uris: [f.path], download: true }),
+        });
+        if (!r.ok) { out.push({ name: f.name, error: `HTTP ${r.status}` }); continue; }
+        const j = await r.json();
+        const url = j && j.data && j.data.urls && j.data.urls[0]
+          && j.data.urls[0].url;
+        if (!url) {
+          out.push({ name: f.name, error: (j && j.msg) || '没拿到直链' });
+          continue;
+        }
+        out.push({
+          url,
+          name: f.name,
+          size: Number(f.size || 0),
+          headers: {},
+          cookies: {},               // 预签名 URL 自带授权，不需要 cookie
+          expires_at: expiresAtFor('cloudreve'),
+          refresh: { platform: 'cloudreve', shareUrl: location.href, fid: String(f.id || '') },
+        });
+      } catch (e) {
+        out.push({ name: f.name, error: String(e) });
+      }
+    }
+    return { ok: true, files: out };
+  }
+
   // ============ 对外 ============
 
   window.__DLINK__ = {
@@ -1003,6 +1080,7 @@
           return await quarkResolve(shareUrl, platformId, maxLinks);
         }
         if (platformId === 'weiyun') return await weiyunResolve(shareUrl, opts);
+        if (platformId === 'cloudreve') return await cloudreveResolve(shareUrl);
         return { ok: false, code: 'NO_PLATFORM', message: `不支持的平台: ${platformId}` };
       } catch (e) {
         return { ok: false, code: 'EXCEPTION', message: String(e) };

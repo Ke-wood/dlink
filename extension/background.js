@@ -136,7 +136,7 @@ function aliasBfessCookies(cookies) {
 async function handleResolve(tab) {
   const platform = detectPlatform(tab.url);
   if (!platform) {
-    throw new Error(`不支持的页面：${tab.url}\n目前支持：百度网盘 / 夸克 / UC / 腾讯微云`);
+    throw new Error(`不支持的页面：${tab.url}\n目前支持：百度网盘 / 夸克 / UC / 腾讯微云 / Cloudreve`);
   }
   const shareId = parseShareId(tab.url, platform);
   if (!shareId) throw new Error('这个页面不是分享页');

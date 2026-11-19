@@ -17,7 +17,7 @@
   //   以前写的是 `if (window.__DLINK__) return;` —— 扩展更新后重新注入时，
   //   页面里的旧对象还活着，新代码直接被挡掉，用户必须手动 F5 才能生效，
   //   表现就是「明明更新了扩展，功能还是旧的」。
-  const BUILD = '0.4.1';
+  const BUILD = '0.4.2';
   if (window.__DLINK__ && window.__DLINK__.build === BUILD) return;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

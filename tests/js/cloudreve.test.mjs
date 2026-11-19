@@ -66,3 +66,20 @@ test('Cloudreve 算网盘（只接管网盘模式下要动手）', () => {
 test('有中文名', () => {
   assert.equal(PLATFORM_NAMES.cloudreve, 'Cloudreve');
 });
+
+// ---------------- shareId 解析 ----------------
+
+import { parseShareId } from '../../extension/platforms.js';
+import { PLATFORMS } from '../../extension/platforms.js';
+
+test('从查询串里取 shareId', () => {
+  assert.equal(parseShareId(SHARE, PLATFORMS.cloudreve), 'GB7CY');
+});
+
+test('/s/<id> 形态也能取', () => {
+  assert.equal(parseShareId('https://x.test/s/AbC123', PLATFORMS.cloudreve), 'AbC123');
+});
+
+test('不是分享页时返回 null', () => {
+  assert.equal(parseShareId('https://x.test/home', PLATFORMS.cloudreve), null);
+});

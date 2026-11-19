@@ -161,6 +161,16 @@ export function inferPlatform(url, referrer) {
 export function parseShareId(url, platform) {
   const u = safeUrl(url);
   if (!u) return null;
+  // Cloudreve 的 shareId 在**查询串**里（?path=cloudreve://<id>@share），
+  // 不在 pathname 上，所以单独处理。
+  if (platform && platform.id === 'cloudreve') {
+    const raw = String(url || '');
+    let dec = raw;
+    try { dec = decodeURIComponent(raw); } catch { /* 保持原样 */ }
+    const m = dec.match(/cloudreve:\/\/([A-Za-z0-9]+)@/)
+      || u.pathname.match(/\/s\/([A-Za-z0-9]+)/);
+    return m ? m[1] : null;
+  }
   const m = u.pathname.match(platform.shareUrl);
   return m ? m[1] : null;
 }
